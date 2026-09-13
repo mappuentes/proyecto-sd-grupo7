@@ -1,0 +1,14 @@
+# Normaliza saltos de línea automáticamente
+* text=auto
+
+# Los scripts de shell SIEMPRE con LF (se ejecutan en Linux/contenedores)
+*.sh text eol=lf
+
+# Ficheros que también van a contenedores Linux -> LF
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binarios: que Git no toque los finales de línea
+*.png binary
+*.jpg binary

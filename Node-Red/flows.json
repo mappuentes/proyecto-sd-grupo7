@@ -1,0 +1,214 @@
+[
+    {
+        "id": "f9d5dd2c9282c97b",
+        "type": "tab",
+        "label": "satellite-radar",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "30427e218d16c051",
+        "type": "worldmap",
+        "z": "f9d5dd2c9282c97b",
+        "name": "",
+        "lat": "",
+        "lon": "",
+        "zoom": "",
+        "layer": "OSMG",
+        "cluster": "",
+        "maxage": "",
+        "usermenu": "show",
+        "layers": "show",
+        "panit": "false",
+        "panlock": "false",
+        "zoomlock": "false",
+        "hiderightclick": "false",
+        "coords": "none",
+        "showgrid": "false",
+        "showruler": "false",
+        "allowFileDrop": "false",
+        "path": "/worldmap",
+        "overlist": "DR,CO,RA,DN",
+        "maplist": "OSMG,OSMC,EsriC,EsriS,UKOS",
+        "mapname": "",
+        "mapurl": "",
+        "mapopt": "",
+        "mapwms": false,
+        "x": 560,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "c250ae78175c900c",
+        "type": "inject",
+        "z": "f9d5dd2c9282c97b",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "600",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 280,
+        "y": 100,
+        "wires": [
+            [
+                "a107cddd45c27783"
+            ]
+        ]
+    },
+    {
+        "id": "a107cddd45c27783",
+        "type": "http request",
+        "z": "f9d5dd2c9282c97b",
+        "name": "",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 550,
+        "y": 100,
+        "wires": [
+            [
+                "db0eb39528b07683"
+            ]
+        ]
+    },
+    {
+        "id": "c7c8283377a75cc4",
+        "type": "debug",
+        "z": "f9d5dd2c9282c97b",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1000,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "db0eb39528b07683",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "prueba_json_api",
+        "func": "const sats = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nconst iss = sats.find(o => String(o.NORAD_CAT_ID) === \"25544\") || sats[0];\n\nif (!iss) { node.warn(\"Celestrak no devolvió datos\"); return null; }\n\nmsg.key = String(iss.NORAD_CAT_ID);\nmsg.payload = JSON.stringify({\n  schema_version: \"1.0\",\n  norad_id: String(iss.NORAD_CAT_ID),\n  name: iss.OBJECT_NAME,\n  epoch: iss.EPOCH,\n  source: \"celestrak:gp\",\n  group: \"stations\",\n  ingested_at: new Date().toISOString(),\n  omm: iss\n});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 790,
+        "y": 100,
+        "wires": [
+            [
+                "c7c8283377a75cc4",
+                "2722967dde7cd652"
+            ]
+        ]
+    },
+    {
+        "id": "2722967dde7cd652",
+        "type": "kafkajs-producer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "producer-test",
+        "client": "3bd81fe80d63f35e",
+        "topic": "satellites.tle.raw",
+        "advancedoptions": false,
+        "acknowledge": "all",
+        "partition": "",
+        "headeritems": {},
+        "key": "",
+        "responsetimeout": 30000,
+        "transactiontimeout": 60000,
+        "metadatamaxage": 300000,
+        "allowautotopiccreation": false,
+        "x": 990,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "0b88adcbb5d4bd0a",
+        "type": "inject",
+        "z": "f9d5dd2c9282c97b",
+        "name": "ejemplo_satelite",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "600",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"name\":\"ISS-demo\",\"lat\":40.4,\"lon\":-3.7,\"icon\":\"rocket\",\"iconColor\":\"red\",\"layer\":\"Satelites\"}",
+        "payloadType": "json",
+        "x": 310,
+        "y": 320,
+        "wires": [
+            [
+                "30427e218d16c051"
+            ]
+        ]
+    },
+    {
+        "id": "3bd81fe80d63f35e",
+        "type": "kafkajs-client",
+        "name": "satellites-radar",
+        "brokers": "kafka:19092",
+        "clientid": "satellites-radar",
+        "connectiontimeout": 3000,
+        "requesttimeout": 25000,
+        "advancedretry": false,
+        "maxretrytime": 30000,
+        "initialretrytime": 300,
+        "factor": 0.2,
+        "multiplier": 2,
+        "retries": 5,
+        "auth": "none",
+        "tlsselfsign": false,
+        "tlscacert": "",
+        "tlsclientcert": "",
+        "tlsprivatekey": "",
+        "tlspassphrase": "",
+        "saslssl": true,
+        "saslmechanism": "plain",
+        "loglevel": "error"
+    },
+    {
+        "id": "54f991a5065a09a3",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-web-worldmap": "5.8.1",
+            "node-red-contrib-kafkajs": "0.0.7"
+        }
+    }
+]
