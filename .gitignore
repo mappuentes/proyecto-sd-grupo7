@@ -1,0 +1,17 @@
+# Dependencias
+node_modules/
+
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+Node-Red/flows_cred.json
+
+# Estado generado por Node-RED
+Node-Red/.config.*
+Node-Red/.sessions.json
+node-red-data/
+
+# Archivos temporales
+*.log
+.DS_Store
