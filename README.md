@@ -75,8 +75,8 @@ El broker expone dos direcciones:
 - `localhost:9092` -> clientes del host (p. ej. la terminal).
 - `kafka:19092` -> clientes en Docker (Node-RED).
 
-Cuando Node-RED se incorpore a Compose, usará `kafka:19092` porque `localhost`
-apuntaría al propio contenedor. Ambos servicios estarán en la misma red de Docker.
+Node-RED usa `kafka:19092` porque `localhost` apuntaría al propio contenedor.
+Ambos servicios están en la misma red de Docker.
 
 Comandos útiles:
 ```bash
@@ -97,7 +97,7 @@ Una partición es suficiente para el grupo `stations` y mantiene un orden simple
 El factor de replicación es 1 porque solo hay un broker; esta demo no ofrece alta
 disponibilidad ante la caída del broker.
 
-Consumer groups previstos:
+Consumer groups:
 
 - `orbit-propagator`: reconstruye y mantiene el estado orbital.
 - `map-view`: transforma posiciones al formato de Worldmap.
@@ -109,7 +109,7 @@ de cálculo.
 
 ## Node-RED
 
-Dependencias previstas:
+Dependencias instaladas:
 
 - node-red-contrib-web-worldmap
 - node-red-contrib-kafkajs
@@ -120,6 +120,36 @@ El flujo contiene tres recorridos desacoplados por Kafka:
 1. consulta y publicación de la órbita de la ISS;
 2. consumo de la órbita, propagación SGP4 y publicación de posiciones;
 3. consumo de posiciones y actualización del marcador de Worldmap.
+
+### Compartir cambios de Node-RED
+
+El flujo compartido por Git está en `Node-Red/flows.json`. Los cambios hechos
+directamente en ese archivo se incluyen en el siguiente commit.
+
+Si se modifica el flujo desde el editor web de Node-RED, primero hay que pulsar
+**Deploy** y copiar el flujo guardado en el contenedor al repositorio:
+
+```bash
+docker cp node-red:/data/flows.json Node-Red/flows.json
+```
+
+Después se puede compartir todo el trabajo actual con:
+
+```bash
+git add README.md docker-compose.yml create-topics.sh Node-Red/
+git commit -m "añade Node-RED con Kafka y posicion de la ISS en tiempo real"
+git push
+```
+
+El resto del equipo lo obtiene y arranca con:
+
+```bash
+git pull
+docker compose up -d --build
+bash create-topics.sh
+```
+
+El archivo `flows_cred.json` no se sube porque puede contener credenciales.
 
 ## API: Celestrak
 
