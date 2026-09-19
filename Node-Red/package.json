@@ -1,0 +1,11 @@
+{
+  "name": "satellite-radar-node-red",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node-RED flows for Satellite Radar",
+  "dependencies": {
+    "node-red-contrib-kafkajs": "0.0.7",
+    "node-red-contrib-web-worldmap": "5.8.1",
+    "satellite.js": "7.1.0"
+  }
+}

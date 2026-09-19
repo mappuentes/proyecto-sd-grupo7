@@ -11,7 +11,7 @@
         "id": "30427e218d16c051",
         "type": "worldmap",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "Mapa de satélites",
         "lat": "",
         "lon": "",
         "zoom": "",
@@ -43,7 +43,7 @@
         "id": "c250ae78175c900c",
         "type": "inject",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "Consultar ISS (inicio + cada 6 h)",
         "props": [
             {
                 "p": "payload"
@@ -53,10 +53,10 @@
                 "vt": "str"
             }
         ],
-        "repeat": "600",
+        "repeat": "21600",
         "crontab": "",
-        "once": false,
-        "onceDelay": 0.1,
+        "once": true,
+        "onceDelay": 2,
         "topic": "",
         "payload": "",
         "payloadType": "date",
@@ -72,11 +72,11 @@
         "id": "a107cddd45c27783",
         "type": "http request",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "CelesTrak: ISS (25544)",
         "method": "GET",
         "ret": "obj",
         "paytoqs": "ignore",
-        "url": "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json",
+        "url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=json",
         "tls": "",
         "persist": false,
         "proxy": "",
@@ -96,12 +96,12 @@
         "id": "c7c8283377a75cc4",
         "type": "debug",
         "z": "f9d5dd2c9282c97b",
-        "name": "debug 1",
+        "name": "Evento ISS preparado",
         "active": true,
         "tosidebar": true,
         "console": false,
         "tostatus": false,
-        "complete": "false",
+        "complete": "payload",
         "statusVal": "",
         "statusType": "auto",
         "x": 1000,
@@ -112,8 +112,8 @@
         "id": "db0eb39528b07683",
         "type": "function",
         "z": "f9d5dd2c9282c97b",
-        "name": "prueba_json_api",
-        "func": "const sats = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nconst iss = sats.find(o => String(o.NORAD_CAT_ID) === \"25544\") || sats[0];\n\nif (!iss) { node.warn(\"Celestrak no devolvió datos\"); return null; }\n\nmsg.key = String(iss.NORAD_CAT_ID);\nmsg.payload = JSON.stringify({\n  schema_version: \"1.0\",\n  norad_id: String(iss.NORAD_CAT_ID),\n  name: iss.OBJECT_NAME,\n  epoch: iss.EPOCH,\n  source: \"celestrak:gp\",\n  group: \"stations\",\n  ingested_at: new Date().toISOString(),\n  omm: iss\n});\nreturn msg;",
+        "name": "Validar y crear evento ISS",
+        "func": "if (msg.statusCode !== 200) {\n  node.error(`CelesTrak respondió con HTTP ${msg.statusCode}`, msg);\n  return null;\n}\n\nconst sats = Array.isArray(msg.payload) ? msg.payload : [];\nconst iss = sats.find(sat => String(sat.NORAD_CAT_ID) === \"25544\");\n\nif (!iss) {\n  node.error(\"CelesTrak no devolvió la ISS (NORAD 25544)\", msg);\n  return null;\n}\n\nmsg.key = \"25544\";\nmsg.payload = JSON.stringify({\n  schema_version: \"1.0\",\n  norad_id: \"25544\",\n  name: iss.OBJECT_NAME,\n  epoch: iss.EPOCH,\n  source: \"celestrak:gp\",\n  group: \"stations\",\n  ingested_at: new Date().toISOString(),\n  omm: iss\n});\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -133,7 +133,7 @@
         "id": "2722967dde7cd652",
         "type": "kafkajs-producer",
         "z": "f9d5dd2c9282c97b",
-        "name": "producer-test",
+        "name": "Publicar ISS en Kafka",
         "client": "3bd81fe80d63f35e",
         "topic": "satellites.tle.raw",
         "advancedoptions": false,
@@ -153,7 +153,7 @@
         "id": "0b88adcbb5d4bd0a",
         "type": "inject",
         "z": "f9d5dd2c9282c97b",
-        "name": "ejemplo_satelite",
+        "name": "Ejemplo fijo (manual)",
         "props": [
             {
                 "p": "payload"
@@ -163,7 +163,7 @@
                 "vt": "str"
             }
         ],
-        "repeat": "600",
+        "repeat": "",
         "crontab": "",
         "once": false,
         "onceDelay": 0.1,
@@ -172,6 +172,196 @@
         "payloadType": "json",
         "x": 310,
         "y": 320,
+        "wires": [
+            [
+                "30427e218d16c051"
+            ]
+        ]
+    },
+    {
+        "id": "7d3a11c4b2809e21",
+        "type": "kafkajs-consumer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Leer órbita desde Kafka",
+        "client": "3bd81fe80d63f35e",
+        "groupid": "orbit-propagator",
+        "topic": "satellites.tle.raw",
+        "advancedoptions": true,
+        "autocommitinterval": 5000,
+        "autocommitthreshold": 1,
+        "sessiontimeout": 30000,
+        "rebalancetimeout": 60000,
+        "heartbeatinterval": 3000,
+        "metadatamaxage": 300000,
+        "maxbytesperpartition": 1048576,
+        "minbytes": 1,
+        "maxbytes": 10485760,
+        "maxwaittimeinms": 5000,
+        "frombeginning": true,
+        "clearoffsets": false,
+        "allowautotopiccreation": false,
+        "x": 270,
+        "y": 200,
+        "wires": [
+            [
+                "29479e1f8aa041d2"
+            ]
+        ]
+    },
+    {
+        "id": "29479e1f8aa041d2",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Guardar órbita ISS",
+        "func": "let event;\n\ntry {\n  event = JSON.parse(msg.payload.value);\n} catch (error) {\n  node.error(\"Evento orbital no es JSON válido\", msg);\n  return null;\n}\n\nif (event.norad_id !== \"25544\" || !event.omm) {\n  node.error(\"Evento orbital de la ISS incompleto\", msg);\n  return null;\n}\n\nconst satrec = satellite.json2satrec(event.omm);\nif (satrec.error !== 0) {\n  node.error(`SGP4 rechazó la órbita: error ${satrec.error}`, msg);\n  return null;\n}\n\nflow.set(\"issOrbit\", {\n  satrec,\n  norad_id: event.norad_id,\n  name: event.name,\n  epoch: event.epoch\n});\nnode.status({ fill: \"green\", shape: \"dot\", text: `órbita ${event.epoch}` });\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "satellite",
+                "module": "satellite.js"
+            }
+        ],
+        "x": 520,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f6b15c030f3d25ab",
+        "type": "inject",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Calcular posición cada segundo",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 5,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 290,
+        "y": 260,
+        "wires": [
+            [
+                "e36f7a57d290741c"
+            ]
+        ]
+    },
+    {
+        "id": "e36f7a57d290741c",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Calcular posición ISS (SGP4)",
+        "func": "const orbit = flow.get(\"issOrbit\");\nif (!orbit) {\n  node.status({ fill: \"yellow\", shape: \"ring\", text: \"esperando órbita\" });\n  return null;\n}\n\nconst now = new Date();\nconst propagated = satellite.propagate(orbit.satrec, now);\nif (!propagated || !propagated.position) {\n  node.error(\"SGP4 no pudo calcular la posición de la ISS\", msg);\n  return null;\n}\n\nconst geodetic = satellite.eciToGeodetic(propagated.position, satellite.gstime(now));\nconst position = {\n  schema_version: \"1.0\",\n  norad_id: orbit.norad_id,\n  name: orbit.name,\n  calculated_at: now.toISOString(),\n  orbit_epoch: orbit.epoch,\n  lat: satellite.degreesLat(geodetic.latitude),\n  lon: satellite.degreesLong(geodetic.longitude),\n  altitude_km: geodetic.height\n};\n\nmsg.key = orbit.norad_id;\nmsg.payload = JSON.stringify(position);\nnode.status({ fill: \"green\", shape: \"dot\", text: `${position.lat.toFixed(2)}, ${position.lon.toFixed(2)}` });\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "satellite",
+                "module": "satellite.js"
+            }
+        ],
+        "x": 550,
+        "y": 260,
+        "wires": [
+            [
+                "a889d216c8b10fa4",
+                "6d5b7644f3a109cf"
+            ]
+        ]
+    },
+    {
+        "id": "a889d216c8b10fa4",
+        "type": "kafkajs-producer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Publicar posición en Kafka",
+        "client": "3bd81fe80d63f35e",
+        "topic": "satellites.position",
+        "advancedoptions": false,
+        "acknowledge": "all",
+        "partition": "",
+        "headeritems": {},
+        "key": "",
+        "responsetimeout": 30000,
+        "transactiontimeout": 60000,
+        "metadatamaxage": 300000,
+        "allowautotopiccreation": false,
+        "x": 850,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "6d5b7644f3a109cf",
+        "type": "debug",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Posición ISS calculada",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 850,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "b1cf0791a8d75e20",
+        "type": "kafkajs-consumer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Leer posiciones desde Kafka",
+        "client": "3bd81fe80d63f35e",
+        "groupid": "map-view",
+        "topic": "satellites.position",
+        "advancedoptions": true,
+        "autocommitinterval": 5000,
+        "autocommitthreshold": 1,
+        "sessiontimeout": 30000,
+        "rebalancetimeout": 60000,
+        "heartbeatinterval": 3000,
+        "metadatamaxage": 300000,
+        "maxbytesperpartition": 1048576,
+        "minbytes": 1,
+        "maxbytes": 10485760,
+        "maxwaittimeinms": 5000,
+        "frombeginning": false,
+        "clearoffsets": false,
+        "allowautotopiccreation": false,
+        "x": 280,
+        "y": 380,
+        "wires": [
+            [
+                "7ac0d4e283911b65"
+            ]
+        ]
+    },
+    {
+        "id": "7ac0d4e283911b65",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Preparar marcador ISS",
+        "func": "let position;\n\ntry {\n  position = JSON.parse(msg.payload.value);\n} catch (error) {\n  node.error(\"Evento de posición no es JSON válido\", msg);\n  return null;\n}\n\nif (position.norad_id !== \"25544\" || ![position.lat, position.lon, position.altitude_km].every(Number.isFinite)) {\n  node.error(\"Evento de posición de la ISS incompleto\", msg);\n  return null;\n}\n\nmsg.payload = {\n  name: position.name,\n  lat: position.lat,\n  lon: position.lon,\n  alt: position.altitude_km * 1000,\n  altitude_km: Number(position.altitude_km.toFixed(1)),\n  norad_id: position.norad_id,\n  calculated_at: position.calculated_at,\n  icon: \"iss\",\n  iconColor: \"red\",\n  layer: \"Satélites\",\n  tooltip: `${position.name} · ${position.altitude_km.toFixed(0)} km`,\n  ttl: 20\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 380,
         "wires": [
             [
                 "30427e218d16c051"

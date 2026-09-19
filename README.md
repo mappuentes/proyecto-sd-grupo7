@@ -8,9 +8,11 @@ encarga de la ingesta, el cálculo orbital y la visualización.
 
 - Kafka funciona en modo KRaft y tiene almacenamiento persistente.
 - Existen los topics `satellites.tle.raw` y `satellites.position`.
-- El flujo actual de Node-RED consulta CelesTrak, selecciona la ISS y publica su OMM en Kafka.
-- Worldmap muestra una posición fija de prueba.
-- Falta contenerizar Node-RED, calcular posiciones reales y consumirlas en el mapa.
+- Node-RED consulta la ISS al arrancar y cada 6 horas, y publica su OMM en Kafka.
+- Node-RED calcula la posición de la ISS cada segundo con SGP4.
+- La posición pasa por `satellites.position` antes de llegar a Worldmap.
+- Node-RED se construye con dependencias fijadas y espera a que Kafka esté listo.
+- Falta calcular posiciones reales y consumirlas en el mapa.
 
 ## Arquitectura propuesta
 
@@ -41,12 +43,13 @@ contenedor si aparece una necesidad real de escalado o mantenimiento.
 ## Cómo arrancar
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 bash create-topics.sh
 ```
 
-Actualmente Compose solo levanta Kafka. Node-RED debe ejecutarse aparte e
-importar `Node-Red/flows.json` hasta completar la fase 1 del plan.
+Compose levanta Kafka y Node-RED en la misma red. El healthcheck de Kafka evita
+que Node-RED arranque antes de que el broker acepte conexiones. El script de
+topics es idempotente y debe ejecutarse después de arrancar los servicios.
 
 - Mapa: http://localhost:1880/worldmap
 
@@ -112,6 +115,12 @@ Dependencias previstas:
 - node-red-contrib-kafkajs
 - satellite.js
 
+El flujo contiene tres recorridos desacoplados por Kafka:
+
+1. consulta y publicación de la órbita de la ISS;
+2. consumo de la órbita, propagación SGP4 y publicación de posiciones;
+3. consumo de posiciones y actualización del marcador de Worldmap.
+
 ## API: Celestrak
 
 Celestrak no da la posición (lat/lon), da los "elementos orbitales": los
@@ -126,15 +135,16 @@ Se pide OMM en JSON por comodidad; el contenido es equivalente al TLE.
 Los datos se bajan de Celestrak (gratis, sin API key):
 
 ```
-https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json
+https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=json
 ```
 
-La consulta se controla con dos parámetros. GROUP selecciona el conjunto de
-satélites y FORMAT el formato de salida. Se descargará cada 6 horas y nunca más
-de una vez cada 2 horas. Si CelesTrak devuelve un error, el flujo conservará el
-último conjunto válido y evitará reintentos continuos.
+La consulta actual usa el NORAD ID `25544` para descargar únicamente la ISS. Se
+ejecuta al arrancar Node-RED y después cada 6 horas; también puede lanzarse a
+mano desde el nodo Inject. Si CelesTrak devuelve un error o una respuesta sin la
+ISS, el flujo muestra el error y no publica un evento inválido.
 
-El grupo determina el volumen de satélites. stations (estaciones espaciales, ISS incluido) trae unos 10-20 y es el ideal para pruebas; galileo y gps-ops rondan los 30 cada uno; weather unos 50-60. starlink contiene miles de objetos y conviene evitarlo salvo que se filtre.
+En la fase 2 se cambiará a `GROUP=stations` para publicar un evento por satélite.
+Este grupo pequeño es adecuado para desarrollo antes de probar grupos mayores.
 
 ### Por qué Celestrak y no una API de posición
 
@@ -191,24 +201,24 @@ Funcionalidades opcionales:
 
 ### Fase 1 - Arranque reproducible
 
-- [ ] Añadir Node-RED al `docker-compose.yml` en la misma red que Kafka.
-- [ ] Crear `Node-Red/package.json`, lockfile y Dockerfile con versiones fijadas.
-- [ ] Esperar a que Kafka esté disponible antes de iniciar los consumidores.
-- [ ] Configurar explícitamente particiones, réplica y retención en `create-topics.sh`.
+- [x] Añadir Node-RED al `docker-compose.yml` en la misma red que Kafka.
+- [x] Crear `Node-Red/package.json`, lockfile y Dockerfile con versiones fijadas.
+- [x] Esperar a que Kafka esté disponible antes de iniciar los consumidores.
+- [x] Configurar explícitamente particiones, réplica y retención en `create-topics.sh`.
 - [ ] Verificar que otro integrante puede arrancar todo siguiendo este README.
 
-**Criterio de cierre:** un único comando levanta Kafka y Node-RED, y la ISS llega
-a `satellites.tle.raw` con NORAD ID como clave.
+**Criterio de cierre:** los dos comandos de arranque levantan Kafka y Node-RED, y
+la ISS llega a `satellites.tle.raw` con NORAD ID como clave.
 
 ### Fase 2 - Recorrido funcional completo
 
 - [ ] Validar el estado HTTP, el JSON y los campos OMM recibidos.
 - [ ] Publicar un mensaje por cada satélite del grupo `stations`.
-- [ ] Consumir `satellites.tle.raw` con el grupo `orbit-propagator`.
-- [ ] Calcular latitud, longitud y altitud cada segundo con `satellite.js`.
-- [ ] Publicar cada posición en `satellites.position`.
-- [ ] Consumir posiciones con `map-view` y mover los marcadores reales.
-- [ ] Desactivar el marcador fijo de demostración sin borrarlo todavía.
+- [x] Consumir `satellites.tle.raw` con el grupo `orbit-propagator`.
+- [x] Calcular latitud, longitud y altitud cada segundo con `satellite.js`.
+- [x] Publicar cada posición en `satellites.position`.
+- [x] Consumir posiciones con `map-view` y mover los marcadores reales.
+- [x] Desactivar el marcador fijo de demostración sin borrarlo todavía.
 
 **Criterio de cierre:** los satélites de `stations` se mueven en Worldmap y todos
 los datos del mapa han pasado por ambos topics.
