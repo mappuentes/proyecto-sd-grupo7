@@ -11,7 +11,7 @@
         "id": "30427e218d16c051",
         "type": "worldmap",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "Mapa de satélites",
         "lat": "",
         "lon": "",
         "zoom": "",
@@ -35,7 +35,7 @@
         "mapurl": "",
         "mapopt": "",
         "mapwms": false,
-        "x": 560,
+        "x": 920,
         "y": 320,
         "wires": []
     },
@@ -43,7 +43,7 @@
         "id": "c250ae78175c900c",
         "type": "inject",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "Consultar stations (inicio + cada 6 h)",
         "props": [
             {
                 "p": "payload"
@@ -53,14 +53,14 @@
                 "vt": "str"
             }
         ],
-        "repeat": "600",
+        "repeat": "21600",
         "crontab": "",
-        "once": false,
-        "onceDelay": 0.1,
+        "once": true,
+        "onceDelay": 2,
         "topic": "",
         "payload": "",
         "payloadType": "date",
-        "x": 280,
+        "x": 100,
         "y": 100,
         "wires": [
             [
@@ -72,7 +72,7 @@
         "id": "a107cddd45c27783",
         "type": "http request",
         "z": "f9d5dd2c9282c97b",
-        "name": "",
+        "name": "CelesTrak: grupo stations",
         "method": "GET",
         "ret": "obj",
         "paytoqs": "ignore",
@@ -84,7 +84,7 @@
         "authType": "",
         "senderr": false,
         "headers": [],
-        "x": 550,
+        "x": 310,
         "y": 100,
         "wires": [
             [
@@ -104,28 +104,28 @@
         "complete": "false",
         "statusVal": "",
         "statusType": "auto",
-        "x": 1000,
-        "y": 200,
+        "x": 720,
+        "y": 220,
         "wires": []
     },
     {
         "id": "db0eb39528b07683",
         "type": "function",
         "z": "f9d5dd2c9282c97b",
-        "name": "prueba_json_api",
-        "func": "const sats = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nconst iss = sats.find(o => String(o.NORAD_CAT_ID) === \"25544\") || sats[0];\n\nif (!iss) { node.warn(\"Celestrak no devolvió datos\"); return null; }\n\nmsg.key = String(iss.NORAD_CAT_ID);\nmsg.payload = JSON.stringify({\n  schema_version: \"1.0\",\n  norad_id: String(iss.NORAD_CAT_ID),\n  name: iss.OBJECT_NAME,\n  epoch: iss.EPOCH,\n  source: \"celestrak:gp\",\n  group: \"stations\",\n  ingested_at: new Date().toISOString(),\n  omm: iss\n});\nreturn msg;",
+        "name": "construir-tle-messages",
+        "func": "if (msg.statusCode !== undefined && msg.statusCode !== 200) {\n  node.error(`CelesTrak respondió con HTTP ${msg.statusCode}`, msg);\n  return null;\n}\n\nconst sats = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\n\nmsg.payload = sats.map(o => ({\n  key: String(o.NORAD_CAT_ID),\n  value: JSON.stringify({\n    schema_version: \"1.0\",\n    norad_id: String(o.NORAD_CAT_ID),\n    name: o.OBJECT_NAME,\n    epoch: o.EPOCH,\n    source: \"celestrak:gp\",\n    group: \"stations\",\n    ingested_at: new Date().toISOString(),\n    omm: o\n  })\n}));\n\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 790,
+        "x": 520,
         "y": 100,
         "wires": [
             [
                 "c7c8283377a75cc4",
-                "2722967dde7cd652"
+                "3bf61393610d5ba9"
             ]
         ]
     },
@@ -133,7 +133,7 @@
         "id": "2722967dde7cd652",
         "type": "kafkajs-producer",
         "z": "f9d5dd2c9282c97b",
-        "name": "producer-test",
+        "name": "producer-satellites.tle.raw",
         "client": "3bd81fe80d63f35e",
         "topic": "satellites.tle.raw",
         "advancedoptions": false,
@@ -145,36 +145,114 @@
         "transactiontimeout": 60000,
         "metadatamaxage": 300000,
         "allowautotopiccreation": false,
-        "x": 990,
+        "x": 1350,
         "y": 100,
         "wires": []
     },
     {
-        "id": "0b88adcbb5d4bd0a",
-        "type": "inject",
+        "id": "d600baf2cc6fd839",
+        "type": "kafkajs-consumer",
         "z": "f9d5dd2c9282c97b",
-        "name": "ejemplo_satelite",
-        "props": [
-            {
-                "p": "payload"
-            },
-            {
-                "p": "topic",
-                "vt": "str"
-            }
-        ],
-        "repeat": "600",
-        "crontab": "",
-        "once": false,
-        "onceDelay": 0.1,
-        "topic": "",
-        "payload": "{\"name\":\"ISS-demo\",\"lat\":40.4,\"lon\":-3.7,\"icon\":\"rocket\",\"iconColor\":\"red\",\"layer\":\"Satelites\"}",
-        "payloadType": "json",
-        "x": 310,
+        "name": "consumer-satellites.position",
+        "client": "3bd81fe80d63f35e",
+        "groupid": "map-view",
+        "topic": "satellites.position",
+        "advancedoptions": false,
+        "autocommitinterval": 5000,
+        "autocommitthreshold": 100,
+        "sessiontimeout": 30000,
+        "rebalancetimeout": 60000,
+        "heartbeatinterval": 3000,
+        "metadatamaxage": 300000,
+        "maxbytesperpartition": 1048576,
+        "minbytes": 1,
+        "maxbytes": 10485760,
+        "maxwaittimeinms": 5000,
+        "frombeginning": false,
+        "clearoffsets": false,
+        "allowautotopiccreation": false,
+        "x": 300,
+        "y": 320,
+        "wires": [
+            [
+                "bbeb170e2f1aafd4",
+                "391e8bc986aa4d0b"
+            ]
+        ]
+    },
+    {
+        "id": "bbeb170e2f1aafd4",
+        "type": "debug",
+        "z": "f9d5dd2c9282c97b",
+        "name": "debug 3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 540,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "391e8bc986aa4d0b",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "pintar-satelites",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) {\n  raw = raw.value;\n}\n\nlet data;\ntry {\n  data = (typeof raw === \"string\") ? JSON.parse(raw) : raw;\n} catch (e) {\n  node.warn(\"value no es JSON: \" + raw);\n  return null;\n}\n\nif (![data.lat, data.lon].every(Number.isFinite)) {\n  return null;\n}\n\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nfunction colorPorGrupo(d) {\n  const n = (d.name || \"\").toUpperCase();\n  if (n.includes(\"STARLINK\")) return \"cyan\";\n  if (n.includes(\"GPS\"))      return \"yellow\";\n  if (n.includes(\"GALILEO\"))  return \"orange\";\n  if (n.includes(\"ISS\"))      return \"red\";\n  return \"lime\";\n}\n\nmsg.payload = {\n  name: data.name || data.norad_id,\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: colorPorGrupo(data),\n  layer: \"Satelites\",\n  label: data.name,\n  ttl: 30,\n  popup: `${data.name}<br>alt: ${alt}<br>vel: ${vel}`\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 640,
         "y": 320,
         "wires": [
             [
                 "30427e218d16c051"
+            ]
+        ]
+    },
+    {
+        "id": "3bf61393610d5ba9",
+        "type": "split",
+        "z": "f9d5dd2c9282c97b",
+        "name": "split-data-OnePersatellites",
+        "splt": "\\n",
+        "spltType": "str",
+        "arraySplt": 1,
+        "arraySpltType": "len",
+        "stream": false,
+        "addname": "",
+        "property": "payload",
+        "x": 780,
+        "y": 100,
+        "wires": [
+            [
+                "af4f389697307c7d"
+            ]
+        ]
+    },
+    {
+        "id": "af4f389697307c7d",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "transformSplitObjects-toString",
+        "func": "msg.key = msg.payload.key;\nmsg.payload = msg.payload.value;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1070,
+        "y": 100,
+        "wires": [
+            [
+                "2722967dde7cd652"
             ]
         ]
     },
@@ -203,7 +281,7 @@
         "loglevel": "error"
     },
     {
-        "id": "54f991a5065a09a3",
+        "id": "1a9b9a466e256b28",
         "type": "global-config",
         "env": [],
         "modules": {
