@@ -8,11 +8,11 @@ encarga de la ingesta, el cálculo orbital y la visualización.
 
 - Kafka funciona en modo KRaft y tiene almacenamiento persistente.
 - Existen los topics `satellites.tle.raw` y `satellites.position`.
-- Node-RED consulta la ISS al arrancar y cada 6 horas, y publica su OMM en Kafka.
-- Node-RED calcula la posición de la ISS cada segundo con SGP4.
-- La posición pasa por `satellites.position` antes de llegar a Worldmap.
-- Node-RED se construye con dependencias fijadas y espera a que Kafka esté listo.
-- Falta calcular posiciones reales y consumirlas en el mapa.
+- Node-RED descarga el grupo `stations` de CelesTrak y publica un OMM por satélite.
+- El propagador (contenedor aparte) consume las órbitas, aplica SGP4 y publica las
+  posiciones cada `TICK_MS`.
+- Node-RED consume `satellites.position` y mueve los marcadores reales en Worldmap.
+- El arranque está coordinado con healthcheck para que nada arranque antes que Kafka.
 
 ## Arquitectura propuesta
 
@@ -26,7 +26,7 @@ Node-RED: ingesta y validación
 Kafka: satellites.tle.raw
     │ consumer group: orbit-propagator
     ▼
-Node-RED + satellite.js: propagación SGP4 cada segundo
+Propagador (contenedor Python): propagación SGP4
     │ latitud, longitud y altitud
     ▼
 Kafka: satellites.position
@@ -36,9 +36,12 @@ Node-RED: Worldmap y, posteriormente, globo 3D
 ```
 
 Se mantiene Kafka como único eje pub/sub. MQTT, una base de datos distribuida y
-un servicio Python no son necesarios para la primera versión. El propagador se
-implementará dentro de Node-RED con `satellite.js`; solo se separará en otro
-contenedor si aparece una necesidad real de escalado o mantenimiento.
+Blockchain no son necesarios para la primera versión. La propagación se separa en
+un contenedor propio por diseño de microservicios: cada componente tiene una única
+responsabilidad (ingesta, cálculo, visualización) y se comunican solo por topics,
+lo que permite desarrollarlos y desplegarlos por separado. El propagador se
+implementa en Python con la librería Skyfield por comodidad de desarrollo; Kafka es
+agnóstico al lenguaje, así que convive sin problema con el Node-RED en JavaScript.
 
 ## Cómo arrancar
 
@@ -113,13 +116,13 @@ Dependencias instaladas:
 
 - node-red-contrib-web-worldmap
 - node-red-contrib-kafkajs
-- satellite.js
 
-El flujo contiene tres recorridos desacoplados por Kafka:
+El flujo contiene dos recorridos desacoplados por Kafka:
 
-1. consulta y publicación de la órbita de la ISS;
-2. consumo de la órbita, propagación SGP4 y publicación de posiciones;
-3. consumo de posiciones y actualización del marcador de Worldmap.
+1. consulta a CelesTrak y publicación de las órbitas en `satellites.tle.raw`;
+2. consumo de posiciones y actualización de los marcadores de Worldmap.
+
+La propagación SGP4 no se hace en Node-RED, sino en el contenedor propagador.
 
 ### Compartir cambios de Node-RED
 
@@ -165,15 +168,15 @@ Se pide OMM en JSON por comodidad; el contenido es equivalente al TLE.
 Los datos se bajan de Celestrak (gratis, sin API key):
 
 ```
-https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=json
+https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json
 ```
 
-La consulta actual usa el NORAD ID `25544` para descargar únicamente la ISS. Se
-ejecuta al arrancar Node-RED y después cada 6 horas; también puede lanzarse a
-mano desde el nodo Inject. Si CelesTrak devuelve un error o una respuesta sin la
-ISS, el flujo muestra el error y no publica un evento inválido.
+La consulta usa el grupo `stations` para descargar las estaciones (ISS y demás) y
+publicar un evento por satélite. Se ejecuta al arrancar Node-RED y después cada 6
+horas; también puede lanzarse a mano desde el nodo Inject. Si CelesTrak devuelve un
+error o una respuesta inválida, el flujo muestra el error y no publica un evento
+inválido.
 
-En la fase 2 se cambiará a `GROUP=stations` para publicar un evento por satélite.
 Este grupo pequeño es adecuado para desarrollo antes de probar grupos mayores.
 
 ### Por qué Celestrak y no una API de posición
@@ -192,20 +195,23 @@ y las posiciones se calculan en local, a cualquier frecuencia, sin límites y ha
 sin conexión. Además, propagar la órbita es lo que aporta valor técnico y habilita
 las funciones "inteligentes" (predicción de pases, geofencing).
 
-## satellite.js
+## Propagación SGP4
 
 Como la API da órbitas y no posiciones, hace falta "propagar" la órbita para sacar
-la lat/lon del instante actual. Ese cálculo es el algoritmo SGP4, y la librería
-que lo implementa en JS es **satellite.js**.
+la lat/lon del instante actual. Ese cálculo es el algoritmo SGP4, que implementa el
+propagador con la librería **Skyfield** (Python).
 
-    TLE/OMM  --(satellite.js / SGP4)-->  lat, lon, altitud  -->  al mapa
+    TLE/OMM  --(SGP4)-->  lat, lon, altitud  -->  al mapa
 
 1. consume info orbital de los satelites
-2. propaga con satellite.js
+2. propaga con SGP4 (Skyfield)
 3. publica posicion tiempo real satelites
 
-El cálculo se hará inicialmente dentro de Node-RED. Esto reutiliza JavaScript,
-reduce contenedores y mantiene Kafka entre las tres etapas lógicas del flujo.
+El cálculo se hace en un contenedor propio (microservicio), separado de la ingesta
+y la visualización. Se usa Python/Skyfield por comodidad de desarrollo; en
+JavaScript el equivalente sería satellite.js. Kafka mantiene desacopladas las tres
+etapas lógicas del flujo, así que el lenguaje del propagador es indiferente para el
+resto del sistema.
 
 
 
@@ -214,7 +220,7 @@ reduce contenedores y mantiene Kafka entre las tres etapas lógicas del flujo.
 | Cód. | Funcionalidad | Descripción | Tipo |
 |------|---------------|-------------|------|
 | C1 | Ingesta de TLE + eje pub/sub | Descarga periódica de TLE/OMM desde Celestrak y publicación satellites.tle.raw en Kafka (clave = NORAD ID, identificador unico por satelite). | Obligatoria |
-| C2 | Propagación orbital en vivo | Consumer satellites.tle.raw que aplica SGP4 (satellite.js) para calcular lat/lon/altitud a ~1 Hz y publicarlas satellites.position. | Obligatoria |
+| C2 | Propagación orbital en vivo | El propagador consume satellites.tle.raw, aplica SGP4 (Skyfield) para calcular lat/lon/altitud y las publica en satellites.position. | Obligatoria |
 | C3 | Mapa en tiempo real | Node-RED consume satellites.position y pinta iconos de satélites en worldmap, moviéndolos en directo. | Obligatoria |
 
 
@@ -242,10 +248,10 @@ la ISS llega a `satellites.tle.raw` con NORAD ID como clave.
 
 ### Fase 2 - Recorrido funcional completo
 
-- [ ] Validar el estado HTTP, el JSON y los campos OMM recibidos.
-- [ ] Publicar un mensaje por cada satélite del grupo `stations`.
+- [x] Validar el estado HTTP, el JSON y los campos OMM recibidos.
+- [x] Publicar un mensaje por cada satélite del grupo `stations`.
 - [x] Consumir `satellites.tle.raw` con el grupo `orbit-propagator`.
-- [x] Calcular latitud, longitud y altitud cada segundo con `satellite.js`.
+- [x] Calcular latitud, longitud y altitud con `SGP4` en el propagador.
 - [x] Publicar cada posición en `satellites.position`.
 - [x] Consumir posiciones con `map-view` y mover los marcadores reales.
 - [x] Desactivar el marcador fijo de demostración sin borrarlo todavía.
@@ -256,18 +262,18 @@ los datos del mapa han pasado por ambos topics.
 ### Fase 3 - Recuperación y errores
 
 - [ ] Conservar la última descarga orbital válida y su fecha.
-- [ ] Recuperar el estado orbital después de reiniciar Node-RED.
-- [ ] Rechazar eventos inválidos y mostrar el error en Node-RED.
+- [ ] Recuperar el estado orbital después de reiniciar el propagador.
+- [ ] Rechazar eventos inválidos y mostrar el error.
 - [ ] Ignorar órbitas antiguas y posiciones atrasadas del mismo NORAD ID.
 - [ ] Mostrar cuándo los datos orbitales están desactualizados.
 - [ ] Probar por separado la caída de CelesTrak, Node-RED y Kafka.
 
-**Criterio de cierre:** reiniciar Node-RED recupera el mapa y una caída externa no
-provoca pérdida silenciosa ni consultas continuas a CelesTrak.
+**Criterio de cierre:** reiniciar el propagador recupera el mapa y una caída externa
+no provoca pérdida silenciosa ni consultas continuas a CelesTrak.
 
 ### Fase 4 - Globo 3D y entrega
 
-- [ ] Añadir una vista 3D que consuma las mismas posiciones desde Node-RED.
+- [ ] Añadir una vista 3D que consuma las mismas posiciones desde Kafka.
 - [ ] Mostrar nombre, NORAD ID, altitud y fecha al seleccionar un satélite.
 - [ ] Preparar capturas, diagrama, logs y exportación PDF del flujo.
 - [ ] Documentar topics, particiones, réplica, grupos y semántica de entrega.
@@ -286,11 +292,9 @@ el recorrido obligatorio funcione de extremo a extremo.
 
 | Archivo | Motivo |
 |---|---|
-| `docker-compose.yml` | Incorporar Node-RED y coordinar el arranque |
+| `docker-compose.yml` | Incorporar Node-RED y el propagador y coordinar el arranque |
 | `create-topics.sh` | Fijar la configuración de los topics |
-| `Node-Red/flows.json` | Completar ingesta, propagación y mapa |
-| `Node-Red/package.json` | Declarar dependencias reproducibles |
-| `Node-Red/package-lock.json` | Fijar las versiones resueltas |
-| `Node-Red/Dockerfile` | Construir la instancia de Node-RED |
+| `Node-Red/flows.json` | Completar ingesta y mapa |
+| `propagator/` | Servicio de propagación SGP4 (Python) |
 | `Node-Red/settings.js` | Configurar módulos y almacenamiento |
 | `Node-Red/public/globe.html` | Añadir el globo 3D en la fase 4 |
