@@ -7,12 +7,14 @@ encarga de la ingesta, el cálculo orbital y la visualización.
 ## Estado actual
 
 - Kafka funciona en modo KRaft y tiene almacenamiento persistente.
-- Existen los topics `satellites.tle.raw` y `satellites.position`.
+- Los topics `satellites.tle.raw`, `satellites.position` y `satellites.dlq` los crea
+  automáticamente el servicio `kafka-init` al arrancar.
 - Node-RED descarga el grupo `stations` de CelesTrak y publica un OMM por satélite.
 - El propagador (contenedor aparte) consume las órbitas, aplica SGP4 y publica las
   posiciones cada `TICK_MS`.
 - Node-RED consume `satellites.position` y mueve los marcadores reales en Worldmap.
-- El arranque está coordinado con healthcheck para que nada arranque antes que Kafka.
+- El arranque está coordinado para que el propagador y Node-RED no arranquen hasta que
+  Kafka esté sano y los topics existan.
 
 ## Arquitectura propuesta
 
@@ -47,12 +49,37 @@ agnóstico al lenguaje, así que convive sin problema con el Node-RED en JavaScr
 
 ```bash
 docker compose up -d --build
-bash create-topics.sh
 ```
 
-Compose levanta Kafka y Node-RED en la misma red. El healthcheck de Kafka evita
-que Node-RED arranque antes de que el broker acepte conexiones. El script de
-topics es idempotente y debe ejecutarse después de arrancar los servicios.
+Es el único comando necesario. Compose levanta los servicios en este orden:
+
+```text
+kafka (healthy)  ->  kafka-init (crea los topics y termina)  ->  propagator y nodered
+```
+
+- `kafka` tiene un healthcheck: solo se considera listo cuando el broker responde.
+- `kafka-init` es un contenedor de un solo uso: crea los topics con su configuración
+  (particiones, réplica, compactación, retención) y termina. En `docker compose ps`
+  aparece como `Exited (0)`, que es lo correcto. Usa `--if-not-exists`, así que se
+  puede repetir `up` sin duplicar ni romper nada.
+- `propagator` y `nodered` esperan a que `kafka-init` termine con éxito
+  (`service_completed_successfully`).
+
+**Por qué existe `kafka-init`.** El healthcheck de Kafka solo comprueba que el broker
+responde, no que los topics existan. Antes los topics se creaban con un script lanzado
+a mano después de `up`, en paralelo al arranque de Node-RED. Si el consumidor de
+Node-RED se suscribía a `satellites.position` antes de que existiera, kafkajs recibía
+`This server does not host this topic-partition`, el nodo quedaba en error y no
+reintentaba: el mapa salía vacío aunque el propagador publicase posiciones. Era una
+condición de carrera (el resultado dependía de quién llegaba antes). Ahora el orden lo
+garantiza Compose, no la suerte.
+
+Para empezar desde cero (borra Kafka y el volumen de Node-RED de este proyecto):
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
 
 - Mapa: http://localhost:1880/worldmap
 
@@ -133,13 +160,13 @@ Si se modifica el flujo desde el editor web de Node-RED, primero hay que pulsar
 **Deploy** y copiar el flujo guardado en el contenedor al repositorio:
 
 ```bash
-docker cp node-red:/data/flows.json Node-Red/flows.json
+docker cp mynodered:/data/flows.json Node-Red/flows.json
 ```
 
 Después se puede compartir todo el trabajo actual con:
 
 ```bash
-git add README.md docker-compose.yml create-topics.sh Node-Red/
+git add README.md docker-compose.yml Node-Red/
 git commit -m "añade Node-RED con Kafka y posicion de la ISS en tiempo real"
 git push
 ```
@@ -149,10 +176,35 @@ El resto del equipo lo obtiene y arranca con:
 ```bash
 git pull
 docker compose up -d --build
-bash create-topics.sh
 ```
 
 El archivo `flows_cred.json` no se sube porque puede contener credenciales.
+
+### Volumen de Node-RED (importante al actualizar)
+
+Node-RED guarda su flujo y sus nodos en el volumen `node_red_data`, que Compose crea
+y gestiona (ya no es `external`). Node-RED se construye ahora desde `Node-Red/Dockerfile`,
+que instala los nodos de `package.json` y copia `flows.json`, así que un volumen nuevo y
+vacío funciona desde el primer arranque sin pasos manuales.
+
+Consecuencia para quien ya tenía un volumen `node_red_data` creado a mano: Compose ahora
+lo nombra con el prefijo del proyecto (`<carpeta>_node_red_data`), por lo que **su volumen
+antiguo deja de usarse** y verá Node-RED con el flujo del repo. Para no perder cambios
+propios sin exportar, antes de hacer `git pull`:
+
+```bash
+docker cp mynodered:/data/flows.json Node-Red/flows.json
+```
+
+Un `flows.json` guardado en un volumen tiene prioridad sobre el del repo: el flujo del
+repo solo se aplica cuando el volumen está vacío.
+
+El volumen antiguo no se borra, solo deja de usarse (se ve con `docker volume ls`). Si
+se olvidó exportar el flujo antes del `git pull`, se recupera con:
+
+```bash
+docker run --rm -v node_red_data:/data -v "$PWD":/out alpine cp /data/flows.json /out/flows-antiguo.json
+```
 
 ## API: Celestrak
 
@@ -240,7 +292,8 @@ Funcionalidades opcionales:
 - [x] Añadir Node-RED al `docker-compose.yml` en la misma red que Kafka.
 - [x] Crear `Node-Red/package.json`, lockfile y Dockerfile con versiones fijadas.
 - [x] Esperar a que Kafka esté disponible antes de iniciar los consumidores.
-- [x] Configurar explícitamente particiones, réplica y retención en `create-topics.sh`.
+- [x] Configurar explícitamente particiones, réplica y retención en el servicio `kafka-init`.
+- [x] Crear los topics en el propio `docker compose up`, antes de arrancar los clientes.
 - [ ] Verificar que otro integrante puede arrancar todo siguiendo este README.
 
 **Criterio de cierre:** los dos comandos de arranque levantan Kafka y Node-RED, y
@@ -292,8 +345,7 @@ el recorrido obligatorio funcione de extremo a extremo.
 
 | Archivo | Motivo |
 |---|---|
-| `docker-compose.yml` | Incorporar Node-RED y el propagador y coordinar el arranque |
-| `create-topics.sh` | Fijar la configuración de los topics |
+| `docker-compose.yml` | Incorporar Node-RED y el propagador, crear los topics con `kafka-init` y coordinar el arranque |
 | `Node-Red/flows.json` | Completar ingesta y mapa |
 | `propagator/` | Servicio de propagación SGP4 (Python) |
 | `Node-Red/settings.js` | Configurar módulos y almacenamiento |

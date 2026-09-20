@@ -29,6 +29,32 @@ services:
     networks:
       - satellite-network
 
+  # Contenedor de un solo uso: crea los topics y termina (Exited 0).
+  # propagator y nodered esperan a que acabe, para que ningun cliente
+  # se suscriba a un topic que todavia no existe.
+  kafka-init:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic satellites.tle.raw --partitions 1 --replication-factor 1 \
+          --config cleanup.policy=compact
+        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic satellites.position --partitions 1 --replication-factor 1 \
+          --config cleanup.policy=delete --config retention.ms=3600000
+        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic satellites.dlq --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:19092 --list
+    networks:
+      - satellite-network
+
   propagator:
     image: miguelliceon/propagator:latest
     container_name: propagator
@@ -40,14 +66,15 @@ services:
       GROUP_ID: orbit-propagator
       TICK_MS: 5000
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - satellite-network
 
   nodered:
-    image: nodered/node-red:latest
+    build: ./Node-Red
+    image: satellite-radar/nodered:local
     container_name: mynodered
     ports:
       - "1880:1880"
@@ -56,8 +83,8 @@ services:
     volumes:
       - node_red_data:/data
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - satellite-network
@@ -65,7 +92,6 @@ services:
 volumes:
   kafka-data:
   node_red_data:
-    external: true
 
 networks:
   satellite-network:
