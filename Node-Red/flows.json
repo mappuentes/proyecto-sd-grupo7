@@ -176,7 +176,8 @@
         "wires": [
             [
                 "bbeb170e2f1aafd4",
-                "391e8bc986aa4d0b"
+                "391e8bc986aa4d0b",
+                "globe-normalize"
             ]
         ]
     },
@@ -288,5 +289,93 @@
             "node-red-contrib-web-worldmap": "5.8.1",
             "node-red-contrib-kafkajs": "0.0.7"
         }
+    },
+    {
+        "id": "globe-normalize",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Validar posición para globo",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch { node.warn(\"Globo: posición no válida\"); return null; }\nif (!data || !/^[0-9]+$/.test(String(data.norad_id)) ||\n    ![data.lat, data.lon, data.alt_km].every(Number.isFinite) ||\n    Math.abs(data.lat) > 90 || Math.abs(data.lon) > 180 || data.alt_km < 0 ||\n    typeof data.ts !== \"string\" || !Number.isFinite(Date.parse(data.ts))) {\n    node.warn(\"Globo: posición incompleta o fuera de rango\");\n    return null;\n}\nreturn { payload: JSON.stringify({\n    norad_id: String(data.norad_id),\n    name: typeof data.name === \"string\" ? data.name : String(data.norad_id),\n    lat: data.lat, lon: data.lon, alt_km: data.alt_km, ts: data.ts,\n    velocity_kms: Number.isFinite(data.velocity_kms) && data.velocity_kms >= 0 ? data.velocity_kms : null\n}) };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 650,
+        "y": 520,
+        "wires": [
+            [
+                "globe-ws-out"
+            ]
+        ]
+    },
+    {
+        "id": "globe-ws-out",
+        "type": "websocket out",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Posiciones → globo 3D",
+        "server": "globe-ws",
+        "client": "",
+        "x": 940,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "globe-ws",
+        "type": "websocket-listener",
+        "path": "/ws/globe",
+        "wholemsg": "false"
+    },
+    {
+        "id": "globe-http",
+        "type": "http in",
+        "z": "f9d5dd2c9282c97b",
+        "name": "GET /globe",
+        "url": "/globe",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 170,
+        "y": 640,
+        "wires": [
+            [
+                "globe-file"
+            ]
+        ]
+    },
+    {
+        "id": "globe-file",
+        "type": "file in",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Página del globo",
+        "filename": "/opt/satellite-radar/public/globe.html",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 450,
+        "y": 640,
+        "wires": [
+            [
+                "globe-response"
+            ]
+        ]
+    },
+    {
+        "id": "globe-response",
+        "type": "http response",
+        "z": "f9d5dd2c9282c97b",
+        "name": "HTML globo",
+        "statusCode": "200",
+        "headers": {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-cache"
+        },
+        "x": 730,
+        "y": 640,
+        "wires": []
     }
 ]

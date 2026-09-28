@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Satellite Radar · Globo 3D</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #070d19; font: 14px Arial, sans-serif; }
+    #globe { margin-left: 300px; width: calc(100vw - 300px); height: 100vh; height: 100dvh; overflow: hidden; }
+    aside { position: absolute; top: 0; left: 0; width: 300px; height: 100vh; height: 100dvh;
+      display: flex; flex-direction: column; gap: 10px; padding: 16px;
+      overflow-y: auto; background: #f4f4f4; color: #222; border-right: 1px solid #ccc; }
+    aside > * { flex-shrink: 0; }
+    h1 { margin: 0 0 12px; font-size: 21px; }
+    p { margin: 7px 0; }
+    #status { font-size: 12px; color: #555; }
+    a { color: #245a91; }
+    a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #245a91; outline-offset: 2px; }
+    button, input { font: inherit; }
+    button { padding: 6px 9px; border: 1px solid #bbb; border-radius: 3px; background: #fff; color: #222; cursor: pointer; }
+    button:hover { background: #e8e8e8; }
+    input[type=search] { width: 100%; padding: 8px; border: 1px solid #aaa; border-radius: 3px; background: #fff; color: #222; }
+    input[type=checkbox] { width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; accent-color: #32689b; }
+    .actions { display: flex; gap: 6px; }
+    #satellite-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; min-height: 90px; border-top: 1px solid #ddd; }
+    .satellite-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+    .satellite-row[hidden] { display: none; }
+    .satellite-row button { flex: 1; min-width: 0; text-align: left; background: transparent; border-color: transparent; overflow-wrap: anywhere; font-size: 13px; }
+    .satellite-row button:hover { background: #e8e8e8; }
+    .satellite-row button[aria-pressed=true] { background: #fff0ce; border-color: #c49a42; font-weight: bold; }
+    .legend { font-size: 12px; color: #555; margin: 0; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #78ffe0; border: 1px solid #687f79; }
+    .dot.selected { background: #ffc66d; margin-left: 8px; }
+    #details { border-top: 1px solid #ccc; padding-top: 12px; }
+    h2 { margin: 0 0 10px; font-size: 15px; overflow-wrap: anywhere; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 6px; margin: 0 0 12px; font-size: 12px; }
+    dt { color: #555; } dd { margin: 0; text-align: right; }
+    #empty { font-size: 13px; color: #555; }
+    .tooltip { padding: 6px 8px; background: #fff; border: 1px solid #aaa; color: #222; font: 13px Arial, sans-serif; }
+    @media(max-width: 700px) {
+      #globe { margin-left: 0; width: 100vw; height: 50dvh; }
+      aside { position: relative; width: 100%; height: 50dvh; border-right: 0; border-top: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+  <main id="globe" aria-label="Globo terrestre 3D con las últimas posiciones de los satélites"></main>
+  <aside aria-label="Leyenda y selección de satélites">
+  <header>
+    <h1>Satélites</h1>
+    <p id="status" role="status">Cargando el globo…</p>
+    <p><span id="count">0</span> visibles de <span id="total">0</span> satélites</p>
+    <a href="/worldmap/">Abrir mapa 2D</a>
+  </header>
+    <label for="search">Buscar por nombre o NORAD</label>
+    <input id="search" type="search" placeholder="Ej. ISS o 25544" autocomplete="off">
+    <div class="actions"><button id="show-all" type="button">Todos</button><button id="hide-all" type="button">Ninguno</button></div>
+    <p class="legend"><span class="dot"></span> Visible <span class="dot selected"></span> Seleccionado</p>
+    <ul id="satellite-list" aria-label="Satélites disponibles"></ul>
+    <p id="empty">Esperando satélites…</p>
+    <section id="details" aria-label="Información del satélite" hidden>
+      <h2 id="sat-name"></h2>
+      <dl>
+        <dt>NORAD</dt><dd id="sat-id"></dd>
+        <dt>Altitud</dt><dd id="sat-alt"></dd>
+        <dt>Velocidad</dt><dd id="sat-speed"></dd>
+        <dt>Latitud / longitud</dt><dd id="sat-coords"></dd>
+        <dt>Actualización</dt><dd id="sat-time"></dd>
+      </dl>
+      <button id="center" type="button">Centrar de nuevo</button>
+    </section>
+  </aside>
+  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    const count = document.getElementById('count');
+    const container = document.getElementById('globe');
+    const satellites = new Map();
+    const hidden = new Set();
+    const rows = new Map();
+    const list = document.getElementById('satellite-list');
+    const search = document.getElementById('search');
+    let selected = null;
+    let showNew = true;
+
+    function setVisibility(id, visible) {
+      if (visible) hidden.delete(id); else hidden.add(id);
+      if (!visible && selected === id) selected = null;
+      draw();
+    }
+
+    function selectSatellite(id) {
+      const sat = satellites.get(id);
+      if (!sat) return;
+      selected = id;
+      hidden.delete(id);
+      draw();
+      globe.pointOfView({ lat: sat.lat, lng: sat.lon, altitude: 1.4 }, 700);
+    }
+
+    function renderPanel() {
+      for (const [id, row] of rows) {
+        if (!satellites.has(id)) { row.item.remove(); rows.delete(id); }
+      }
+      const query = search.value.trim().toLocaleLowerCase('es');
+      let matches = 0;
+      for (const sat of satellites.values()) {
+        const id = sat.norad_id;
+        let row = rows.get(id);
+        if (!row) {
+          const item = document.createElement('li');
+          item.className = 'satellite-row';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.addEventListener('change', () => setVisibility(id, checkbox.checked));
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.addEventListener('click', () => selectSatellite(id));
+          item.append(checkbox, button);
+          list.append(item);
+          row = { item, checkbox, button };
+          rows.set(id, row);
+        }
+        const name = sat.name || id;
+        row.checkbox.checked = !hidden.has(id);
+        row.checkbox.setAttribute('aria-label', `Mostrar ${name} (NORAD ${id})`);
+        row.button.textContent = name;
+        row.button.setAttribute('aria-pressed', String(selected === id));
+        row.item.hidden = !`${name} ${id}`.toLocaleLowerCase('es').includes(query);
+        if (!row.item.hidden) matches++;
+      }
+      const empty = document.getElementById('empty');
+      empty.hidden = matches > 0;
+      empty.textContent = satellites.size ? 'No hay coincidencias.' : 'Esperando satélites con datos recientes…';
+      const sat = satellites.get(selected);
+      document.getElementById('details').hidden = !sat;
+      if (sat) {
+        document.getElementById('sat-name').textContent = sat.name || sat.norad_id;
+        document.getElementById('sat-id').textContent = sat.norad_id;
+        document.getElementById('sat-alt').textContent = `${sat.alt_km.toFixed(1)} km`;
+        document.getElementById('sat-speed').textContent = Number.isFinite(sat.velocity_kms) ? `${sat.velocity_kms.toFixed(2)} km/s` : 'No disponible';
+        document.getElementById('sat-coords').textContent = `${sat.lat.toFixed(2)}° / ${sat.lon.toFixed(2)}°`;
+        document.getElementById('sat-time').textContent = new Date(sat.ts).toLocaleTimeString('es-ES');
+      }
+    }
+
+    search.addEventListener('input', renderPanel);
+    document.getElementById('show-all').addEventListener('click', () => {
+      showNew = true; hidden.clear(); draw();
+    });
+    document.getElementById('hide-all').addEventListener('click', () => {
+      showNew = false;
+      for (const id of satellites.keys()) hidden.add(id);
+      selected = null; draw();
+    });
+    document.getElementById('center').addEventListener('click', () => selectSatellite(selected));
+    const MAX_AGE_MS = 30000;
+    let socket;
+    let globe;
+    let lastReceived = 0;
+
+    function draw() {
+      const now = Date.now();
+      for (const [id, sat] of satellites) {
+        if (now - Date.parse(sat.ts) > MAX_AGE_MS) satellites.delete(id);
+      }
+      if (!satellites.has(selected)) selected = null;
+      const visible = [...satellites.values()].filter(sat => !hidden.has(sat.norad_id));
+      globe.labelsData(visible);
+      count.textContent = visible.length;
+      document.getElementById('total').textContent = satellites.size;
+      renderPanel();
+    }
+
+    function connect() {
+      socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/globe`);
+      socket.onopen = () => { status.textContent = 'Conectado. Esperando posiciones…'; };
+      socket.onmessage = event => {
+        let sat;
+        try { sat = JSON.parse(event.data); } catch { return; }
+        if (!sat || typeof sat.norad_id !== 'string' || ![sat.lat, sat.lon, sat.alt_km].every(Number.isFinite)
+            || Math.abs(sat.lat) > 90 || Math.abs(sat.lon) > 180 || sat.alt_km < 0) return;
+        const timestamp = Date.parse(sat.ts);
+        if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > MAX_AGE_MS) return;
+        const previous = satellites.get(sat.norad_id);
+        if (previous && Date.parse(previous.ts) > timestamp) return;
+        if (!previous && !showNew) hidden.add(sat.norad_id);
+        satellites.set(sat.norad_id, sat);
+        lastReceived = Date.now();
+        status.textContent = `Actualizado: ${new Date(timestamp).toLocaleTimeString('es-ES')}`;
+        draw();
+      };
+      socket.onclose = () => {
+        status.textContent = 'Sin conexión. Reintentando…';
+        setTimeout(connect, 3000);
+      };
+      socket.onerror = () => socket.close();
+    }
+
+    try {
+      globe = new Globe(container, { animateIn: false })
+        .backgroundColor('#070d19')
+        .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe@2.45.1/example/img/earth-blue-marble.jpg')
+        .showGraticules(true)
+        .atmosphereAltitude(0.025)
+        .labelsData([])
+        .labelLat('lat').labelLng('lon')
+        .labelAltitude(sat => sat.alt_km / 6371)
+        .labelText('name').labelSize(1).labelDotRadius(0.5)
+        .labelsTransitionDuration(0)
+        .labelColor(sat => sat.norad_id === selected ? '#ffc66d' : '#78ffe0')
+        .onLabelClick(sat => selectSatellite(sat.norad_id))
+        .labelLabel(sat => {
+          const tooltip = document.createElement('div');
+          tooltip.className = 'tooltip';
+          tooltip.textContent = `${sat.name || sat.norad_id} · ${sat.alt_km.toFixed(0)} km`;
+          return tooltip;
+        });
+      globe.pointOfView({ lat: 25, lng: -15, altitude: 2.3 });
+      const resize = () => globe.width(container.clientWidth).height(container.clientHeight);
+      window.addEventListener('resize', resize);
+      resize();
+      connect();
+      setInterval(() => {
+        draw();
+        if (socket.readyState === WebSocket.OPEN && Date.now() - lastReceived > MAX_AGE_MS)
+          status.textContent = 'Conectado, sin posiciones recientes. Esperando datos…';
+      }, 5000);
+    } catch (error) {
+      status.textContent = 'No se pudo cargar el globo. Comprueba Internet y que WebGL esté disponible.';
+      console.error(error);
+    }
+  </script>
+</body>
+</html>

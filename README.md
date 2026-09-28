@@ -81,7 +81,8 @@ docker compose down -v
 docker compose up -d --build
 ```
 
-- Mapa: http://localhost:1880/worldmap
+- Mapa 2D: http://localhost:1880/worldmap
+- Globo 3D: http://localhost:1880/globe
 
 consumir de un topic:
 
@@ -150,6 +151,49 @@ El flujo contiene dos recorridos desacoplados por Kafka:
 2. consumo de posiciones y actualización de los marcadores de Worldmap.
 
 La propagación SGP4 no se hace en Node-RED, sino en el contenedor propagador.
+
+### Globo 3D
+
+La página `/globe` muestra las últimas posiciones calculadas del grupo `stations`.
+Se puede girar y acercar la Tierra y ver el nombre y altitud al pasar el cursor
+sobre un marcador. Las alturas se representan a escala sobre una esfera de radio
+6371 km; el tamaño de los marcadores está ampliado para poder verlos.
+
+El consumidor existente de `satellites.position` alimenta tanto Worldmap como el
+WebSocket `/ws/globe`. El navegador espera la siguiente publicación (normalmente
+cada 5 segundos), sin consultar CelesTrak ni recalcular órbitas. Las posiciones de
+más de 30 segundos se ocultan y se indica cuando dejan de llegar datos.
+
+Esta primera vista usa Globe.gl 2.46.2 y una textura de Three-globe 2.45.1 desde
+jsDelivr; requiere Internet para cargar esos recursos y un navegador con WebGL.
+El panel lateral permite buscar por nombre o NORAD y marcar los satélites que se
+quieren ver. La búsqueda filtra la lista; las casillas controlan el globo. «Todos»
+y «Ninguno» afectan al conjunto completo, incluso con una búsqueda activa.
+Al pulsar un nombre o un marcador se centra la cámara, se resalta en amarillo y
+se muestra su NORAD, altitud, velocidad, coordenadas y última actualización.
+La selección se mantiene mientras llegan posiciones, sin mover continuamente
+la cámara. «Centrar de nuevo» vuelve a enfocar su posición actual.
+
+**Actualizar una instalación con volumen existente:** reconstruir la imagen
+actualiza la página, pero el volumen conserva su `flows.json`. Exporta cualquier
+cambio propio antes de aplicar el flujo del repositorio. Para actualizarlo:
+
+```bash
+docker cp mynodered:/data/flows.json /tmp/satellite-flows-backup.json
+docker compose up -d --build
+docker compose stop nodered
+docker cp Node-Red/flows.json mynodered:/data/flows.json
+docker compose start nodered
+```
+
+No hace falta borrar los volúmenes. La página se copia fuera de `/data` para que
+el volumen no oculte futuras actualizaciones del HTML.
+
+Comprobación de validación y conversión de posiciones:
+
+```bash
+node Node-Red/test-globe.cjs
+```
 
 ### Compartir cambios de Node-RED
 
@@ -326,8 +370,8 @@ no provoca pérdida silenciosa ni consultas continuas a CelesTrak.
 
 ### Fase 4 - Globo 3D y entrega
 
-- [ ] Añadir una vista 3D que consuma las mismas posiciones desde Kafka.
-- [ ] Mostrar nombre, NORAD ID, altitud y fecha al seleccionar un satélite.
+- [x] Añadir una vista 3D que consuma las mismas posiciones desde Kafka, a través de Node-RED.
+- [x] Mostrar nombre, NORAD ID, altitud y fecha al seleccionar un satélite.
 - [ ] Preparar capturas, diagrama, logs y exportación PDF del flujo.
 - [ ] Documentar topics, particiones, réplica, grupos y semántica de entrega.
 - [ ] Ensayar una demo de cinco minutos, incluido un fallo controlado.
