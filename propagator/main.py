@@ -8,7 +8,8 @@ import time
 from datetime import datetime, timezone
 
 import numpy as np
-from confluent_kafka import Consumer, Producer
+# OFFSET_BEGINNING Constante para leer desde el primer mensaje
+from confluent_kafka import Consumer, Producer, OFFSET_BEGINNING
 from sgp4.api import Satrec
 from sgp4 import omm
 from skyfield.api import EarthSatellite, load, wgs84
@@ -21,13 +22,21 @@ GROUP_ID = os.getenv("GROUP_ID", "propagator")
 TICK_S = float(os.getenv("TICK_MS", "1000")) / 1000.0
 
 ts = load.timescale()
-sats = {}  # norad_id -> (EarthSatellite, name)
+sats = {}  # norad_id -> (EarthSatellite, name, epoch)
 
 consumer = Consumer({
     "bootstrap.servers": BROKER,
     "group.id": GROUP_ID,
-    "auto.offset.reset": "earliest",
+    "enable.auto.commit": False, #Empezamos de 0 por si hay caída del propagador
 })
+
+# Función para leer desde el primer mensaje del topic en vez de con offset, que 
+# dejaba el diccionario vacío si el propagador se caía y volvía a iniciar
+def on_assign(c, partitions):
+    for p in partitions:
+        p.offset = OFFSET_BEGINNING
+    c.assign(partitions)
+
 producer = Producer({"bootstrap.servers": BROKER})
 
 
@@ -46,7 +55,14 @@ def build_satellite(data):
 def handle_tle(raw):
     try:
         data = json.loads(raw)
-        sats[data["norad_id"]] = (build_satellite(data), data.get("name", data["norad_id"]))
+        norad_id = data["norad_id"]
+        epoch = data.get("epoch","")
+        known = sats.get(norad_id)
+
+        if known and epoch <= known[2]:
+            return  # ignore older or same epoch
+
+        sats[norad_id] = (build_satellite(data), data.get("name", norad_id), epoch)
     except Exception as err:
         producer.produce(DLQ_TOPIC, json.dumps({
             "failed_stage": "parse/satrec",
@@ -59,7 +75,7 @@ def handle_tle(raw):
 def propagate_all():
     t = ts.now()
     iso = t.utc_iso()
-    for norad_id, (sat, name) in sats.items():
+    for norad_id, (sat, name, _) in sats.items():
         geo = sat.at(t)
         sub = wgs84.subpoint(geo)
         v = geo.velocity.km_per_s
@@ -78,12 +94,17 @@ def propagate_all():
 
 
 def main():
-    consumer.subscribe([TLE_TOPIC])
+    consumer.subscribe([TLE_TOPIC], on_assign=on_assign)
     print(f"Propagator running. broker={BROKER} tick={TICK_S * 1000:.0f}ms", flush=True)
     last = time.monotonic()
+    restored = False
     while True:
         msg = consumer.poll(0.2)
-        if msg is not None and not msg.error():
+        if msg is None:
+            if sats and not restored:
+                print(f"Loaded {len(sats)} satellites from TLE topic", flush=True)
+                restored = True
+        elif not msg.error():
             handle_tle(msg.value().decode())
         if time.monotonic() - last >= TICK_S:
             if sats:

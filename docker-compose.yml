@@ -56,7 +56,8 @@ services:
       - satellite-network
 
   propagator:
-    image: miguelliceon/propagator:latest
+    build: ./propagator
+    image: satellite-radar/propagator:local
     container_name: propagator
     environment:
       KAFKA_BROKER: kafka:19092

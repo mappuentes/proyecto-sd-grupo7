@@ -130,7 +130,9 @@ disponibilidad ante la caída del broker.
 
 Consumer groups:
 
-- `orbit-propagator`: reconstruye y mantiene el estado orbital.
+- `orbit-propagator`: reconstruye y mantiene el estado orbital. Lee `satellites.tle.raw`
+  desde el principio en cada arranque y no guarda offsets (ver «Recuperación tras un
+  reinicio»), por lo que `kafka-consumer-groups` no refleja su progreso real.
 - `map-view`: transforma posiciones al formato de Worldmap.
 
 El productor actual usa `acks=all`. No se asumirá semántica exactly-once: los
@@ -309,6 +311,58 @@ JavaScript el equivalente sería satellite.js. Kafka mantiene desacopladas las t
 etapas lógicas del flujo, así que el lenguaje del propagador es indiferente para el
 resto del sistema.
 
+El compose construye la imagen desde `propagator/` (`build: ./propagator`) en lugar de
+descargar `miguelliceon/propagator` de Docker Hub, para que el código del repositorio
+sea el que se ejecuta. Tras cambiar `propagator/main.py` hay que reconstruir:
+`docker compose up -d --build propagator`.
+
+### Recuperación tras un reinicio
+
+**Problema.** El propagador guarda las órbitas solo en memoria (`sats`). Con la
+configuración anterior (`auto.offset.reset: earliest` y auto-commit), Kafka conservaba
+el offset del grupo `orbit-propagator`, y `earliest` solo se aplica cuando el grupo no
+tiene offset guardado. Tras un reinicio (`docker restart`, caída, recreación del
+contenedor o reinicio de Docker Desktop) el consumidor retomaba por el final, no
+releía las órbitas y se quedaba sin satélites hasta que Node-RED volviera a publicar
+(al arrancar y cada 6 horas). El mapa se quedaba vacío.
+
+**Solución.** `satellites.tle.raw` está compactado, así que contiene como máximo la
+última órbita de cada satélite: ya es una copia del estado. El propagador lo trata como
+una tabla que reconstruye en cada arranque:
+
+- `enable.auto.commit: False`: no se guardan offsets, porque no se usan.
+- Un callback `on_assign` fuerza `OFFSET_BEGINNING` en cada asignación de partición, de
+  modo que siempre se relee el topic completo. Se mantiene `subscribe` (y no una
+  asignación fija) para que, con varios propagadores, Kafka siga repartiendo particiones.
+- Antes de guardar una órbita se compara su `epoch` con la que ya se tiene: si no es
+  más nueva se descarta. Así la relectura tolera los duplicados que aún no ha limpiado
+  la compactación y una órbita vieja nunca sustituye a una nueva, llegue en el orden que llegue.
+- `norad_id` se lee con `data["norad_id"]`: un mensaje sin él falla y va a
+  `satellites.dlq` en lugar de entrar en el diccionario con clave `None`, lo que tumbaría
+  el propagador en cada arranque al releer el topic.
+
+**Qué se ve en los logs.** Al terminar de cargar el topic, el propagador escribe
+`Loaded N satellites from TLE topic`. Es el mismo mensaje en un arranque limpio y en una
+recuperación, porque el propagador no puede distinguirlos.
+
+**Cómo comprobarlo:**
+
+```bash
+docker compose up -d --build propagator
+docker logs propagator            # Loaded 22 satellites from TLE topic
+docker restart propagator
+docker logs propagator --tail 3   # vuelve a cargar los 22 y el mapa no se vacía
+```
+
+**Límites conocidos.**
+
+- Con el topic vacío (por ejemplo tras `docker compose down -v`) no hay nada que
+  cargar hasta que Node-RED publique.
+- «Terminó la carga» se detecta porque `poll` no devuelve nada durante 200 ms. Es una
+  aproximación válida para los logs, no una garantía.
+- Un mensaje sin `epoch` de un satélite ya conocido se ignora sin aviso.
+- No se avisa todavía de órbitas desactualizadas (punto pendiente de esta fase).
+
 
 
 ## Funcionalidades
@@ -359,9 +413,10 @@ los datos del mapa han pasado por ambos topics.
 ### Fase 3 - Recuperación y errores
 
 - [ ] Conservar la última descarga orbital válida y su fecha.
-- [ ] Recuperar el estado orbital después de reiniciar el propagador.
+- [x] Recuperar el estado orbital después de reiniciar el propagador.
 - [ ] Rechazar eventos inválidos y mostrar el error.
-- [ ] Ignorar órbitas antiguas y posiciones atrasadas del mismo NORAD ID.
+- [x] Ignorar órbitas antiguas del mismo NORAD ID (comparando la época).
+- [ ] Ignorar posiciones atrasadas del mismo NORAD ID en los consumidores.
 - [ ] Mostrar cuándo los datos orbitales están desactualizados.
 - [ ] Probar por separado la caída de CelesTrak, Node-RED y Kafka.
 
