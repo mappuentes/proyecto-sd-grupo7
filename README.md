@@ -382,6 +382,110 @@ Funcionalidades opcionales:
 | C5 | Dashboard + endpoints HTTP | Panel con "próximo pase", contador de satélites y endpoint `GET /passes` de consulta (al estilo del `/bounds` del ejemplo de aviones). | Opcional |
 | C6 | Trazado de órbita (ground-track) | Dibujo de la traza pasada + futura de un satélite seleccionado propagando N minutos por delante/detrás. | Opcional |
 
+### C6: predicción de la próxima hora — decisiones de diseño
+
+**Estado:** diseño acordado; implementación en curso en la rama `feature/predict_orbit`.
+Esta sección describe lo que se va a construir y por qué, no algo ya disponible.
+
+**Qué se quiere.** Seleccionar un satélite, en el globo 3D o en el mapa 2D, y activar una
+opción que dibuje por dónde pasará durante la próxima hora.
+
+**Qué significa "predecir" aquí.** No es una estimación ni aprendizaje automático. SGP4 ya
+calcula la posición en cualquier instante; el propagador hoy solo lo hace para "ahora".
+Predecir la próxima hora es repetir el cálculo para ahora, +1 min… +60 min, y unir los
+puntos. Con órbitas de pocos días de antigüedad, una hora vista tiene la misma fiabilidad
+que la posición actual. De momento solo se dibuja el futuro; añadir la traza pasada sería
+empezar los instantes en negativo.
+
+#### Decisión 1: calcular solo lo que alguien pide
+
+| Alternativa | Motivo para descartarla o elegirla |
+|---|---|
+| Calcular en el navegador con `satellite.js` | Descartada. El navegador solo recibe posiciones, no órbitas; habría que enviárselas y duplicar en JavaScript el cálculo que ya hace el propagador |
+| Calcular la trayectoria de todos los satélites cada minuto | Descartada. El coste crece con el tamaño del catálogo aunque nadie mire; con grupos grandes (miles de satélites) no escala |
+| **Calcular bajo demanda, solo los satélites pedidos** | **Elegida.** El coste depende del número de satélites distintos que se están mirando |
+
+#### Decisión 2: peticiones y respuestas por Kafka, pero sin RPC
+
+El cálculo sigue en el propagador y todo viaja por Kafka, como el resto del sistema:
+
+| Topic | Contenido | Clave | Productor → consumidor | Retención |
+|---|---|---|---|---|
+| `satellites.track.request` | "Quiero la trayectoria de X" | NORAD ID | Node-RED → propagador | `delete`, 5 min |
+| `satellites.track` | Trayectoria calculada (61 puntos `[lat, lon, alt_km]`) | NORAD ID | propagador → Node-RED (grupo `track-view`) | `delete`, 10 min |
+
+- **La respuesta se publica por satélite, no por petición.** No hay un identificador de
+  petición que emparejar con su respuesta, como en una llamada remota. La trayectoria de la
+  ISS sirve a cualquiera que la esté mirando: si diez usuarios la piden, se calcula una vez.
+- **No se compactan.** A diferencia de `satellites.tle.raw`, no son estado que haya que
+  recuperar: una trayectoria de hace diez minutos empieza en el pasado y ya no sirve, y una
+  petición antigua tampoco interesa.
+- **El horizonte (60 min) y el paso (60 s) los fija el propagador**, no quien pide. Así un
+  cliente no puede pedir un cálculo desmesurado.
+- **El propagador lee cada topic desde un sitio distinto.** Con un único consumidor y un único
+  bucle, `on_assign` sigue releyendo `satellites.tle.raw` desde el principio (recuperación del
+  estado) y empieza `satellites.track.request` por el final (solo peticiones nuevas).
+
+#### Decisión 3: las peticiones caducan (leases)
+
+Una petición no significa "calcula para siempre", sino "calcula durante los próximos 90 s".
+Quien siga interesado debe renovarla antes. Si nadie renueva (pestaña cerrada, Node-RED
+caído), el cálculo se detiene solo. No depende de un mensaje de "cancelar" que podría
+perderse por el camino.
+
+| Parámetro | Valor |
+|---|---|
+| Lease en el propagador | 90 s |
+| Renovación de Node-RED hacia Kafka | cada 30 s, una petición por satélite distinto |
+| Recalcular cada trayectoria activa | cada 60 s (su inicio avanza con el tiempo) |
+| Latido del globo hacia Node-RED | cada 30 s |
+| Máximo de trayectorias activas | 50 |
+
+El lease es tres veces el periodo de renovación, así que tolera perder dos renovaciones
+seguidas. Todos los valores son variables de entorno del propagador.
+
+#### Decisión 4: cada usuario ve solo su predicción
+
+Node-RED hace de pasarela entre los navegadores y Kafka. Guarda en memoria una tabla de
+suscripciones (`pestaña → satélite`) y, al llegar una trayectoria, la envía solo a las
+pestañas que la pidieron:
+
+- **Globo 3D:** por el WebSocket `/ws/globe`, ahora en los dos sentidos. El navegador envía
+  `track_on` / `track_off`; Node-RED responde solo a esa conexión (`msg._session`). Las
+  posiciones se siguen enviando a todos.
+- **Mapa 2D:** el popup de cada satélite incluye los botones "Predecir 1 h" y "Quitar", que
+  llaman a la función `feedback` de Worldmap y llegan a un nodo `worldmap in`. La línea se
+  envía solo a esa pestaña (`msg._sessionid`). Al cerrarla, Worldmap emite `disconnect` y la
+  suscripción se borra.
+
+Como el mapa 2D no tiene código propio que emita latidos, su suscripción dura hasta pulsar
+"Quitar" o cerrar la pestaña. La del globo caduca si deja de recibir latidos.
+
+#### Decisión 5: partir la línea en el antimeridiano (solo 2D)
+
+En un mapa plano, una línea de +179° a -179° de longitud se dibujaría atravesando todo el
+mapa. Worldmap no lo corrige (solo lo hace para círculos máximos), así que Node-RED parte la
+trayectoria en tramos al cruzar ±180°, interpolando la latitud del cruce. En el globo 3D
+este problema no existe.
+
+#### Comportamiento ante fallos
+
+| Situación | Qué ocurre |
+|---|---|
+| Se reinicia el propagador con una predicción activa | Pierde los leases (están en memoria); la siguiente renovación de Node-RED los repone en ≤ 30 s y la línea vuelve |
+| Se reinicia Node-RED | Pierde la tabla de suscripciones; el globo la recrea con su latido al reconectar; en el mapa 2D hay que volver a pulsar |
+| Llega una petición antes de que el propagador haya cargado las órbitas | Se ignora; la renovación de 30 s la repone |
+| Petición malformada | Va a `satellites.dlq` y el propagador sigue funcionando |
+
+#### Limitaciones conocidas
+
+- Una predicción por pestaña: elegir otro satélite sustituye a la anterior.
+- El inicio de la línea puede ir hasta 60 s por detrás del marcador, por el periodo de
+  recálculo.
+- Con varios propagadores, una petición llegará al mismo que tiene la órbita del satélite
+  solo si `satellites.track.request` y `satellites.tle.raw` tienen el mismo número de
+  particiones (ambos usan el NORAD ID como clave). Hoy hay una partición y no aplica.
+
 
 ## Plan de implementación
 
