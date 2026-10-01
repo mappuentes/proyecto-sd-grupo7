@@ -51,6 +51,12 @@ services:
           --config cleanup.policy=delete --config retention.ms=3600000
         kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
           --topic satellites.dlq --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic satellites.track.request --partitions 1 --replication-factor 1 \
+          --config cleanup.policy=delete --config retention.ms=300000
+        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic satellites.track --partitions 1 --replication-factor 1 \
+          --config cleanup.policy=delete --config retention.ms=600000
         kafka-topics --bootstrap-server kafka:19092 --list
     networks:
       - satellite-network
@@ -64,6 +70,13 @@ services:
       TLE_TOPIC: satellites.tle.raw
       POSITION_TOPIC: satellites.position
       DLQ_TOPIC: satellites.dlq
+      TRACK_REQUEST_TOPIC: satellites.track.request
+      TRACK_TOPIC: satellites.track
+      TRACK_HORIZON_MINUTES: 60
+      TRACK_STEP_SECONDS: 60
+      TRACK_REFRESH_SECONDS: 60
+      TRACK_LEASE_SECONDS: 90
+      MAX_ACTIVE_TRACKS: 20
       GROUP_ID: orbit-propagator
       TICK_MS: 5000
     depends_on:
