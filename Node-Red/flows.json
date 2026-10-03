@@ -490,7 +490,8 @@
         "y": 880,
         "wires": [
             [
-                "708e1153a4e37aea"
+                "708e1153a4e37aea",
+                "single-world-map"
             ]
         ]
     },
@@ -572,5 +573,25 @@
         "x": 950,
         "y": 860,
         "wires": []
+    },
+    {
+        "id": "single-world-map",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Mapa de un solo mundo (sin repetir)",
+        "func": "// Mapa 2D con un solo mundo. Las capas base de Worldmap se repiten en horizontal sin fin, y\n// los marcadores y la traza de predicción solo se dibujan en una de las copias. Esta capa usa\n// noWrap: Leaflet dibuja el mundo una vez y fuera de ±180° queda fondo vacío, así que se puede\n// alejar el zoom libremente sin ver copias.\nconst p = msg.payload || {};\nif (p.action !== \"connected\" || !msg._sessionid) return null;\n\nconst LAYER = \"OSM (un solo mundo)\";\nconst sid = msg._sessionid;\n\n// 1) Pasar antes a una capa propia de Worldmap. Si la pestaña se reconecta y ya tenía la nuestra,\n//    así se quita del mapa la copia antigua en lugar de apilar otra encima.\nconst toBuiltIn = { _sessionid: sid, payload: { command: { layer: \"OSM\" } } };\n\n// 2) Crear la capa sin repetición y activarla. zoomLevels vacío quita límites de zoom anteriores.\nconst toSingleWorld = { _sessionid: sid, payload: { command: {\n    map: {\n        name: LAYER,\n        url: \"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png\",\n        opt: {\n            noWrap: true,                                  // no repetir el mundo\n            bounds: [[-85.0511, -180], [85.0511, 180]],    // no pedir teselas fuera de él\n            subdomains: [\"a\", \"b\", \"c\"],\n            maxNativeZoom: 19,\n            maxZoom: 20,\n            attribution: \"Map data © OpenStreetMap contributors\"\n        }\n    },\n    layer: LAYER,\n    zoomLevels: []\n} } };\n\nreturn [[toBuiltIn, toSingleWorld]];",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 940,
+        "wires": [
+            [
+                "30427e218d16c051"
+            ]
+        ]
     }
 ]

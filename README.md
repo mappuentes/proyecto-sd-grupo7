@@ -468,6 +468,81 @@ mapa. Worldmap no lo corrige (solo lo hace para círculos máximos), así que No
 trayectoria en tramos al cruzar ±180°, interpolando la latitud del cruce. En el globo 3D
 este problema no existe.
 
+#### Decisión 6: el mapa 2D muestra un solo mundo, sin repetirlo
+
+**El problema.** Las capas base de Worldmap (Leaflet) se repiten en horizontal sin fin: al alejar
+el zoom aparecen copias del mundo una al lado de otra. Pero cada marcador y cada línea se dibuja
+**una sola vez**, en la copia que corresponde a su longitud. Con varias copias visibles, los
+satélites y la traza de predicción aparecen solo en una de ellas y la traza parece cortada en el
+borde (el satélite «continúa» en la copia vecina, donde no hay nada dibujado).
+
+**Lo que se averiguó de Worldmap 5.8.1** (leyendo su código):
+
+- El mapa se crea con las opciones por defecto de Leaflet: sin `noWrap`, `maxBounds` ni
+  `worldCopyJump`.
+- No hay un comando para limitarlo a un solo mundo. `command.bounds` solo mueve la vista y
+  `panlock` congela el mapa en el área visible en ese momento, con lo que se pierden el zoom y el
+  arrastre.
+- Sí existe el comando `map`, que crea una capa base nueva y le pasa **cualquier opción de capa
+  de Leaflet**. Ahí está la salida: `noWrap` hace que el mundo se dibuje una sola vez.
+
+**Alternativas valoradas:**
+
+| Alternativa | Por qué se descartó |
+|---|---|
+| Limitar el zoom mínimo al ancho de la ventana (comando `zoomLevels`). Fue el primer intento | Probada en Edge y Chrome, falló: en una ventana apaisada el mundo (cuadrado) ocupa todo el ancho y queda más alto que la ventana, así que nunca se ve entero; y como no se puede alejar, los popups de los satélites pegados al borde izquierdo se quedan cortados |
+| Dibujar la traza también en las copias vecinas (longitudes ±360°) | Arregla la línea pero no los marcadores, que seguirían apareciendo una sola vez; multiplica los mensajes y los nombres que hay que borrar; y el mundo seguiría repitiéndose |
+| `panlock` | Congela el mapa en la vista actual: se pierde el zoom y el arrastre |
+| Sustituir Worldmap por una página propia con Leaflet (como el globo 3D) | Es la más robusta, pero hay que rehacer lo que Worldmap ya da (marcadores, popups, capas, menú). Sigue siendo la salida si Worldmap se queda corto |
+| Modificar el código de Worldmap al construir la imagen (Dockerfile) | Frágil: se rompería al cambiar de versión de la librería |
+
+**Solución adoptada.** La función de Node-RED **«Mapa de un solo mundo (sin repetir)»**, conectada
+a la salida del nodo `worldmap in` («Eventos del mapa»), reacciona al evento `connected` y envía
+a esa pestaña dos órdenes seguidas.
+
+1. `{ layer: "OSM" }`: pasa a una capa de Worldmap que ya existe.
+2. Crea y activa la capa **«OSM (un solo mundo)»** con `zoomLevels: []`.
+
+Justificación de cada decisión:
+
+| Decisión | Por qué |
+|---|---|
+| Se envía en el evento `connected`, y solo a esa pestaña (`_sessionid`) | Las capas viven en el navegador y se pierden al recargar la página. Cada conexión, incluidas las que ocurren tras reiniciar Node-RED, necesita recibirlas. Enviarla solo a la pestaña que se conecta evita tocar a las demás |
+| Primero se pasa a la capa «OSM» y después se crea la nueva | Si la pestaña se reconecta sin recargar, ya tenía la capa nueva activa. Al pasar antes a otra, Worldmap la quita del mapa; si no, se apilaría otra copia encima |
+| `noWrap: true` | Es la opción de Leaflet que dibuja el mundo una sola vez; fuera de ±180° queda fondo vacío. Elimina las copias en el origen, así que no hay que limitar el zoom ni duplicar nada |
+| `bounds: [[-85.0511, -180], [85.0511, 180]]` | OSM solo tiene teselas dentro de ese rectángulo (límite de la proyección Web Mercator). Con él Leaflet no pide teselas que no existen |
+| `subdomains: a, b, c`, `maxNativeZoom: 19`, `maxZoom: 20` | Son los mismos valores de las capas OSM que trae Worldmap, para que el zoom se comporte igual que antes |
+| `attribution` | La licencia de OpenStreetMap exige mostrar la atribución |
+| `zoomLevels: []` | Quita cualquier límite de zoom fijado antes en esa página (el primer intento lo usaba) |
+| Capa OSM en color | El comando `map` solo sabe construir capas normales o WMS; la versión en gris que Worldmap usa por defecto se crea en su propio código y no se puede pedir. Se pierde el gris |
+
+**Resultado.** Se puede alejar el zoom sin límite y ver el mundo entero una vez, y los marcadores y
+la traza siempre están en el único mundo visible. Los satélites del borde ya no tienen el problema
+del popup cortado porque ahora se puede alejar para darles sitio.
+
+**Límites conocidos:**
+
+- Si el usuario elige otra capa en el menú de capas de Worldmap, esa sí se repite.
+- Worldmap no limita el arrastre horizontal (solo lo hace si el usuario pulsa «Lock Map»), así que
+  se puede arrastrar el mapa lejos y acabar viendo solo fondo vacío, sin forma rápida de volver.
+- Las teselas siguen necesitando Internet, igual que las capas que trae Worldmap.
+- Se ha comprobado con una pestaña simulada (las órdenes que recibe, su orden y que alejar el
+  zoom ya no provoca restricciones). **No se ha verificado en un navegador real** que el mundo salga
+  una sola vez ni que los popups del borde se vean completos.
+
+**Mejora propuesta (no implementada): botón para centrar el mapa.** Sin límite de zoom ni de
+arrastre es fácil perderse: tras acercarse a un satélite o arrastrar hacia el fondo vacío, volver a
+la vista del mundo entero obliga a ajustar el zoom y el arrastre a mano. Un botón «Centrar» lo
+resolvería de un clic, y también ayudaría en la demo. Encaja con lo que ya ofrece Worldmap:
+
+- El comando `button` (`{ name, icon, position }`) añade un botón al mapa; al pulsarlo, Worldmap
+  envía `{ action: "button", name }` al nodo `worldmap in`.
+- La misma función (o una hermana) añadiría el botón al conectarse y, al recibir ese evento,
+  devolvería a esa pestaña `{ command: { bounds: [[-85, -180], [85, 180]] } }`, que encuadra el
+  mundo entero (`fly: true` lo anima).
+- Serían unas 15 líneas más en Node-RED, sin tocar la librería. Una variante útil sería un segundo
+  botón que centre el mapa en el satélite seleccionado.
+
 #### Comportamiento ante fallos
 
 | Situación | Qué ocurre |
@@ -485,7 +560,6 @@ este problema no existe.
 - Con varios propagadores, una petición llegará al mismo que tiene la órbita del satélite
   solo si `satellites.track.request` y `satellites.tle.raw` tienen el mismo número de
   particiones (ambos usan el NORAD ID como clave). Hoy hay una partición y no aplica.
-
 
 ## Plan de implementación
 
@@ -531,6 +605,7 @@ no provoca pérdida silenciosa ni consultas continuas a CelesTrak.
 
 - [x] Añadir una vista 3D que consuma las mismas posiciones desde Kafka, a través de Node-RED.
 - [x] Mostrar nombre, NORAD ID, altitud y fecha al seleccionar un satélite.
+- [ ] (Opcional) Botón en el mapa 2D para centrarlo en el mundo entero (ver la decisión 6 de C6).
 - [ ] Preparar capturas, diagrama, logs y exportación PDF del flujo.
 - [ ] Documentar topics, particiones, réplica, grupos y semántica de entrega.
 - [ ] Ensayar una demo de cinco minutos, incluido un fallo controlado.
