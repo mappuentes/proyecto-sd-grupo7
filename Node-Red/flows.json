@@ -8,6 +8,45 @@
         "env": []
     },
     {
+        "id": "3bd81fe80d63f35e",
+        "type": "kafkajs-client",
+        "name": "satellites-radar",
+        "brokers": "kafka:19092",
+        "clientid": "satellites-radar",
+        "connectiontimeout": 3000,
+        "requesttimeout": 25000,
+        "advancedretry": false,
+        "maxretrytime": 30000,
+        "initialretrytime": 300,
+        "factor": 0.2,
+        "multiplier": 2,
+        "retries": 5,
+        "auth": "none",
+        "tlsselfsign": false,
+        "tlscacert": "",
+        "tlsclientcert": "",
+        "tlsprivatekey": "",
+        "tlspassphrase": "",
+        "saslssl": true,
+        "saslmechanism": "plain",
+        "loglevel": "error"
+    },
+    {
+        "id": "1a9b9a466e256b28",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-web-worldmap": "5.8.1",
+            "node-red-contrib-kafkajs": "0.0.7"
+        }
+    },
+    {
+        "id": "globe-ws",
+        "type": "websocket-listener",
+        "path": "/ws/globe",
+        "wholemsg": "false"
+    },
+    {
         "id": "30427e218d16c051",
         "type": "worldmap",
         "z": "f9d5dd2c9282c97b",
@@ -35,8 +74,8 @@
         "mapurl": "",
         "mapopt": "",
         "mapwms": false,
-        "x": 920,
-        "y": 320,
+        "x": 1370,
+        "y": 340,
         "wires": []
     },
     {
@@ -202,7 +241,7 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "pintar-satelites",
-        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) {\n  raw = raw.value;\n}\n\nlet data;\ntry {\n  data = (typeof raw === \"string\") ? JSON.parse(raw) : raw;\n} catch (e) {\n  node.warn(\"value no es JSON: \" + raw);\n  return null;\n}\n\nif (![data.lat, data.lon].every(Number.isFinite)) {\n  return null;\n}\n\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nfunction colorPorGrupo(d) {\n  const n = (d.name || \"\").toUpperCase();\n  if (n.includes(\"STARLINK\")) return \"cyan\";\n  if (n.includes(\"GPS\"))      return \"yellow\";\n  if (n.includes(\"GALILEO\"))  return \"orange\";\n  if (n.includes(\"ISS\"))      return \"red\";\n  return \"lime\";\n}\n\nmsg.payload = {\n  name: data.name || data.norad_id,\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: colorPorGrupo(data),\n  layer: \"Satelites\",\n  label: data.name,\n  ttl: 30,\n  popup: `${data.name}<br>alt: ${alt}<br>vel: ${vel}`\n};\n\nreturn msg;",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) {\n  raw = raw.value;\n}\n\nlet data;\ntry {\n  data = (typeof raw === \"string\") ? JSON.parse(raw) : raw;\n} catch (e) {\n  node.warn(\"value no es JSON: \" + raw);\n  return null;\n}\n\nif (![data.lat, data.lon].every(Number.isFinite)) {\n  return null;\n}\n\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nfunction colorPorGrupo(d) {\n  const n = (d.name || \"\").toUpperCase();\n  if (n.includes(\"STARLINK\")) return \"cyan\";\n  if (n.includes(\"GPS\"))      return \"yellow\";\n  if (n.includes(\"GALILEO\"))  return \"orange\";\n  if (n.includes(\"ISS\"))      return \"red\";\n  return \"lime\";\n}\n\nconst norad = String(data.norad_id);\nconst botones = /^[0-9]+$/.test(norad)\n  ? `<br><button onclick='feedback(\"${norad}\",\"${norad}\",\"track_on\",true)'>Predecir 1 h</button>`\n    + ` <button onclick='feedback(\"${norad}\",\"${norad}\",\"track_off\",true)'>Quitar</button>`\n  : \"\";\n\nmsg.payload = {\n  name: data.name || data.norad_id,\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: colorPorGrupo(data),\n  layer: \"Satelites\",\n  label: data.name,\n  ttl: 30,\n  popup: `${data.name}<br>alt: ${alt}<br>vel: ${vel}${botones}`\n};\n\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -258,39 +297,6 @@
         ]
     },
     {
-        "id": "3bd81fe80d63f35e",
-        "type": "kafkajs-client",
-        "name": "satellites-radar",
-        "brokers": "kafka:19092",
-        "clientid": "satellites-radar",
-        "connectiontimeout": 3000,
-        "requesttimeout": 25000,
-        "advancedretry": false,
-        "maxretrytime": 30000,
-        "initialretrytime": 300,
-        "factor": 0.2,
-        "multiplier": 2,
-        "retries": 5,
-        "auth": "none",
-        "tlsselfsign": false,
-        "tlscacert": "",
-        "tlsclientcert": "",
-        "tlsprivatekey": "",
-        "tlspassphrase": "",
-        "saslssl": true,
-        "saslmechanism": "plain",
-        "loglevel": "error"
-    },
-    {
-        "id": "1a9b9a466e256b28",
-        "type": "global-config",
-        "env": [],
-        "modules": {
-            "node-red-contrib-web-worldmap": "5.8.1",
-            "node-red-contrib-kafkajs": "0.0.7"
-        }
-    },
-    {
         "id": "globe-normalize",
         "type": "function",
         "z": "f9d5dd2c9282c97b",
@@ -317,15 +323,9 @@
         "name": "Posiciones → globo 3D",
         "server": "globe-ws",
         "client": "",
-        "x": 940,
+        "x": 1410,
         "y": 520,
         "wires": []
-    },
-    {
-        "id": "globe-ws",
-        "type": "websocket-listener",
-        "path": "/ws/globe",
-        "wholemsg": "false"
     },
     {
         "id": "globe-http",
@@ -376,6 +376,201 @@
         },
         "x": 730,
         "y": 640,
+        "wires": []
+    },
+    {
+        "id": "4f15599f992a15b5",
+        "type": "websocket in",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Peticiones del globo",
+        "server": "globe-ws",
+        "client": "",
+        "x": 270,
+        "y": 820,
+        "wires": [
+            [
+                "55d148fdfcb4ba95"
+            ]
+        ]
+    },
+    {
+        "id": "55d148fdfcb4ba95",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Suscripción del globo",
+        "func": "// Mensajes del globo: {\"type\":\"track_on\"|\"track_off\",\"norad_id\":\"25544\"}\nlet req;\ntry { req = JSON.parse(msg.payload); } catch (e) { return null; }\nconst session = msg._session;\nif (!session || !req || typeof req.type !== \"string\") return null;\n\nconst subs = flow.get(\"trackSubs\") || {};\nconst key = \"globe:\" + session.id;\n\nif (req.type === \"track_off\") {\n    delete subs[key];\n    flow.set(\"trackSubs\", subs);\n    return null;\n}\nconst norad = String(req.norad_id);\nif (req.type !== \"track_on\" || !/^[0-9]{1,9}$/.test(norad)) return null;\n\nconst isNew = !subs[key] || subs[key].norad !== norad;\n\n// track_on llega al activar y luego cada 30 s como latido: renueva la caducidad.\nsubs[key] = { kind: \"globe\", session, norad, expires: Date.now() + 90000 };\nflow.set(\"trackSubs\", subs);\nreturn { key: norad, payload: JSON.stringify({ norad_id: norad, requested_at: new Date().toISOString(), force: isNew }) };\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 780,
+        "wires": [
+            [
+                "4e59f2a2d9e3e5b8"
+            ]
+        ]
+    },
+    {
+        "id": "708e1153a4e37aea",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Suscripción mapa",
+        "func": "// Eventos del worldmap: feedback(..., \"track_on\"/\"track_off\") y \"disconnect\".\nconst p = msg.payload || {};\nconst sessionId = msg._sessionid;\nif (!sessionId) return null;\n\nconst subs = flow.get(\"trackSubs\") || {};\nconst key = \"map:\" + sessionId;\nconst previous = subs[key];\nconst removePrevious = previous\n    ? { _sessionid: sessionId, payload: { name: \"track-\" + previous.norad, deleted: true } }\n    : null;\n\nif (p.action === \"disconnect\") {        // pestaña cerrada: dejar de enviarle\n    delete subs[key];\n    flow.set(\"trackSubs\", subs);\n    return null;\n}\nif (p.action !== \"track_on\" && p.action !== \"track_off\") return null;\n\nif (p.action === \"track_off\") {\n    delete subs[key];\n    flow.set(\"trackSubs\", subs);\n    return [null, removePrevious];\n}\nconst norad = String(p.value);\nif (!/^[0-9]{1,9}$/.test(norad)) return null;\n\n// El mapa no tiene latido: la suscripción dura hasta \"Quitar\" o hasta cerrar la pestaña.\nsubs[key] = { kind: \"map\", session: sessionId, norad, expires: null };\nflow.set(\"trackSubs\", subs);\nconst request = { key: norad, payload: JSON.stringify({ norad_id: norad, requested_at: new Date().toISOString(), force: true }) };\nreturn [request, previous && previous.norad !== norad ? removePrevious : null];\n",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 530,
+        "y": 860,
+        "wires": [
+            [
+                "4e59f2a2d9e3e5b8"
+            ],
+            [
+                "30427e218d16c051"
+            ]
+        ]
+    },
+    {
+        "id": "27d167e60738af46",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Renovar predicciones",
+        "func": "// Purga suscripciones caducadas y renueva el lease del propagador:\n// una sola petición por NORAD distinto, aunque lo miren muchas sesiones.\nconst subs = flow.get(\"trackSubs\") || {};\nconst now = Date.now();\nconst norads = new Set();\nfor (const [key, sub] of Object.entries(subs)) {\n    if (sub.expires !== null && sub.expires < now) delete subs[key];\n    else norads.add(sub.norad);\n}\nflow.set(\"trackSubs\", subs);\nconst requestedAt = new Date().toISOString();\nreturn [[...norads].map(n => ({ key: n, payload: JSON.stringify({ norad_id: n, requested_at: requestedAt }) }))];\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 940,
+        "wires": [
+            [
+                "4e59f2a2d9e3e5b8"
+            ]
+        ]
+    },
+    {
+        "id": "7fc270a27172d809",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Repartir trayectoria",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet track;\ntry { track = typeof raw === \"string\" ? JSON.parse(raw) : raw; } catch (e) { return null; }\nif (!track || !/^[0-9]+$/.test(String(track.norad_id)) ||\n    !Array.isArray(track.points) || track.points.length < 2) return null;\n\nconst norad = String(track.norad_id);\nconst subs = flow.get(\"trackSubs\") || {};\nconst now = Date.now();\nconst toGlobe = [];\nconst toMap = [];\n\nfor (const sub of Object.values(subs)) {\n    if (sub.norad !== norad || (sub.expires !== null && sub.expires < now)) continue;\n    if (sub.kind === \"globe\") {\n        toGlobe.push({ _session: sub.session, payload: JSON.stringify({ type: \"track\", ...track }) });\n    } else {\n        toMap.push({ _sessionid: sub.session, payload: {\n            name: \"track-\" + norad,\n            line: splitAtAntimeridian(track.points),\n            color: \"#ffc66d\", weight: 2, opacity: 0.9,\n            layer: \"Predicción\",\n            clickable: true,\n            popup: \"Próxima hora · \" + escapeHtml(track.name || norad) + \" (NORAD \" + norad + \")\"\n        }});\n    }\n}\nreturn [toGlobe, toMap];\n\n// Parte la línea al cruzar ±180°: si no, Leaflet une +179° con -179° cruzando todo el mapa.\nfunction splitAtAntimeridian(points) {\n    const segments = [[]];\n    for (let i = 0; i < points.length; i++) {\n        const [lat, lon] = points[i];\n        if (i > 0) {\n            const [plat, plon] = points[i - 1];\n            if (Math.abs(lon - plon) > 180) {\n                const edge = plon > 0 ? 180 : -180;\n                const lonUnwrapped = lon + (plon > 0 ? 360 : -360);\n                const f = (edge - plon) / (lonUnwrapped - plon);   // dónde cae el cruce (0..1)\n                const latCross = plat + f * (lat - plat);\n                segments[segments.length - 1].push([latCross, edge]);   // cierra en un borde\n                segments.push([[latCross, -edge]]);                     // reabre en el otro\n            }\n        }\n        segments[segments.length - 1].push([lat, lon]);\n    }\n    return segments;\n}\n\nfunction escapeHtml(s) {\n    return String(s).replace(/[&<>\"']/g, c => ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}\n",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1090,
+        "y": 660,
+        "wires": [
+            [
+                "globe-ws-out"
+            ],
+            [
+                "30427e218d16c051"
+            ]
+        ]
+    },
+    {
+        "id": "26c4e4f4ed7b500e",
+        "type": "worldmap in",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Eventos del mapa",
+        "path": "/worldmap",
+        "events": "connect,disconnect,point,layer,bounds,files,draw,other",
+        "x": 270,
+        "y": 880,
+        "wires": [
+            [
+                "708e1153a4e37aea"
+            ]
+        ]
+    },
+    {
+        "id": "2c16a2de631661df",
+        "type": "inject",
+        "z": "f9d5dd2c9282c97b",
+        "name": "Renovacion cada 30 seg",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "30",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 230,
+        "y": 960,
+        "wires": [
+            [
+                "27d167e60738af46"
+            ]
+        ]
+    },
+    {
+        "id": "852ddd22841bcd08",
+        "type": "kafkajs-consumer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "consumer-satellites.track",
+        "client": "3bd81fe80d63f35e",
+        "groupid": "track-view",
+        "topic": "satellites.track",
+        "advancedoptions": false,
+        "autocommitinterval": 5000,
+        "autocommitthreshold": 100,
+        "sessiontimeout": 30000,
+        "rebalancetimeout": 60000,
+        "heartbeatinterval": 3000,
+        "metadatamaxage": 300000,
+        "maxbytesperpartition": 1048576,
+        "minbytes": 1,
+        "maxbytes": 10485760,
+        "maxwaittimeinms": 5000,
+        "frombeginning": false,
+        "clearoffsets": false,
+        "allowautotopiccreation": false,
+        "x": 930,
+        "y": 780,
+        "wires": [
+            [
+                "7fc270a27172d809"
+            ]
+        ]
+    },
+    {
+        "id": "4e59f2a2d9e3e5b8",
+        "type": "kafkajs-producer",
+        "z": "f9d5dd2c9282c97b",
+        "name": "producer-satellites.track.request",
+        "client": "3bd81fe80d63f35e",
+        "topic": "satellites.track.request",
+        "advancedoptions": false,
+        "acknowledge": "all",
+        "partition": "",
+        "headeritems": {},
+        "key": "",
+        "responsetimeout": 30000,
+        "transactiontimeout": 60000,
+        "metadatamaxage": 300000,
+        "allowautotopiccreation": false,
+        "x": 950,
+        "y": 860,
         "wires": []
     }
 ]

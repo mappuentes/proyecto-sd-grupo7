@@ -33,8 +33,8 @@ const context = {
   document: { getElementById: id => elements[id], createElement: element },
   window: { addEventListener() {} }, location: { protocol: 'http:', host: 'localhost:1880' },
   Globe: function () { return fakeGlobe; },
-  WebSocket: class { static OPEN = 1; constructor(url) { assert.equal(url, 'ws://localhost:1880/ws/globe'); this.readyState = 1; ws = this; } },
-  setInterval: callback => { timer = callback; }, setTimeout() {}, console
+  WebSocket: class { static OPEN = 1; constructor(url) { assert.equal(url, 'ws://localhost:1880/ws/globe'); this.readyState = 1; this.sent = []; ws = this; } send(data) { this.sent.push(data); } },
+  setInterval: callback => { timer ??= callback; }, clearInterval() {}, setTimeout() {}, console
 };
 vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
 assert.equal(calls.labelAltitude(sample), 420 / 6371);
@@ -80,9 +80,33 @@ assert.equal(calls.labelsData.length, 0, 'none must also hide new arrivals');
 elements['show-all'].events.click();
 assert.equal(calls.labelsData.length, 2, 'all must include satellites outside the search');
 assert.equal(elements.total.textContent, 2);
+// Prediction of the next hour: toggle, WebSocket requests, drawing and cancellation.
+send({ ...sample, ts: new Date().toISOString() });
+ws.sent = [];
+calls.onLabelClick(sample);
+elements.predict.checked = true; elements.predict.events.change();
+assert.deepEqual(ws.sent.map(JSON.parse), [{ type: 'track_on', norad_id: '25544' }], 'activating sends track_on');
+const track = { type: 'track', norad_id: '25544', generated_at: new Date().toISOString(), step_s: 60, points: [[40, -3, 420], [41, -2, 421]] };
+send(track);
+assert.equal(calls.pathsData.length, 1);
+assert.equal(JSON.stringify(calls.pathsData[0].points), JSON.stringify(track.points));
+assert.equal(calls.pathPointAlt([40, -3, 6371]), 1, 'track altitude uses the same scale as the markers');
+const drawn = calls.pathsData;
+send({ ...track, norad_id: '48274' });
+assert.equal(calls.pathsData, drawn, 'a track of a satellite that is not being predicted is ignored');
+ws.sent = [];
+calls.onLabelClick({ ...sample, norad_id: '48274' });
+assert.deepEqual(ws.sent.map(JSON.parse), [{ type: 'track_off', norad_id: '25544' }], 'selecting another satellite stops the previous prediction');
+assert.equal(calls.pathsData.length, 0);
+ws.sent = [];
+elements.predict.checked = true; elements.predict.events.change();
+assert.deepEqual(ws.sent.map(JSON.parse), [{ type: 'track_on', norad_id: '48274' }]);
+elements.predict.checked = false; elements.predict.events.change();
+assert.deepEqual(ws.sent.map(JSON.parse).at(-1), { type: 'track_off', norad_id: '48274' });
+assert.equal(calls.pathsData.length, 0);
 assert.equal(JSON.parse(run({ ...sample, velocity_kms: 'bad' }).payload).velocity_kms, null);
 vm.runInNewContext('for (const sat of satellites.values()) sat.ts = new Date(Date.now() - 60000).toISOString()', context);
 timer();
 assert.equal(calls.labelsData.length, 0, 'stale markers must disappear');
 assert.equal(elements['satellite-list'].children.length, 0);
-console.log('Globe checks passed: selection, filtering, visibility, Kafka payloads, validation, altitude scale, ordering and stale markers.');
+console.log('Globe checks passed: selection, filtering, visibility, Kafka payloads, validation, altitude scale, ordering, stale markers and orbit prediction.');

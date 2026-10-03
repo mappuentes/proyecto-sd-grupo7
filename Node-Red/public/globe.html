@@ -68,7 +68,10 @@
         <dt>Latitud / longitud</dt><dd id="sat-coords"></dd>
         <dt>Actualización</dt><dd id="sat-time"></dd>
       </dl>
+      <label><input id="predict" type="checkbox"> Predecir próxima hora</label>
+      <p id="predict-status" class="legend"></p>
       <button id="center" type="button">Centrar de nuevo</button>
+
     </section>
   </aside>
   <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
@@ -84,6 +87,46 @@
     let selected = null;
     let showNew = true;
 
+        const predictBox = document.getElementById('predict');
+    const predictStatus = document.getElementById('predict-status');
+    const RENEW_MS = 30000;      // latido: renueva el lease cada 30 s
+    let predicting = null;       // NORAD con predicción activa, o null
+    let renewTimer = null;
+
+    function sendTrack(type, id) {
+      if (socket && socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify({ type, norad_id: id }));
+    }
+
+    function startPrediction(id) {
+      stopPrediction();                       // una sola a la vez
+      predicting = id;
+      sendTrack('track_on', id);
+      renewTimer = setInterval(() => sendTrack('track_on', id), RENEW_MS);
+      predictStatus.textContent = 'Calculando…';
+    }
+
+    function stopPrediction() {
+      if (predicting) sendTrack('track_off', predicting);
+      clearInterval(renewTimer);
+      renewTimer = null;
+      predicting = null;
+      predictStatus.textContent = '';
+      if (globe) globe.pathsData([]);         // borra la línea
+    }
+
+    function handleTrack(data) {
+      // Una trayectoria de un satélite que ya no interesa (llegó tarde) se ignora.
+      if (data.norad_id !== predicting || !Array.isArray(data.points)) return;
+      globe.pathsData([{ points: data.points }]);
+      predictStatus.textContent = `Calculada a las ${new Date(data.generated_at).toLocaleTimeString('es-ES')}`;
+    }
+
+    predictBox.addEventListener('change', () => {
+      if (predictBox.checked && selected) startPrediction(selected); else stopPrediction();
+    });
+
+
     function setVisibility(id, visible) {
       if (visible) hidden.delete(id); else hidden.add(id);
       if (!visible && selected === id) selected = null;
@@ -93,6 +136,7 @@
     function selectSatellite(id) {
       const sat = satellites.get(id);
       if (!sat) return;
+      if (predicting && predicting !== id) stopPrediction();
       selected = id;
       hidden.delete(id);
       draw();
@@ -136,6 +180,7 @@
       const sat = satellites.get(selected);
       document.getElementById('details').hidden = !sat;
       if (sat) {
+        predictBox.checked = predicting === selected;
         document.getElementById('sat-name').textContent = sat.name || sat.norad_id;
         document.getElementById('sat-id').textContent = sat.norad_id;
         document.getElementById('sat-alt').textContent = `${sat.alt_km.toFixed(1)} km`;
@@ -166,6 +211,7 @@
         if (now - Date.parse(sat.ts) > MAX_AGE_MS) satellites.delete(id);
       }
       if (!satellites.has(selected)) selected = null;
+      if (predicting && predicting !== selected) stopPrediction();
       const visible = [...satellites.values()].filter(sat => !hidden.has(sat.norad_id));
       globe.labelsData(visible);
       count.textContent = visible.length;
@@ -175,10 +221,11 @@
 
     function connect() {
       socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/globe`);
-      socket.onopen = () => { status.textContent = 'Conectado. Esperando posiciones…'; };
+      socket.onopen = () => { status.textContent = 'Conectado. Esperando posiciones…'; if (predicting) sendTrack('track_on', predicting);};
       socket.onmessage = event => {
         let sat;
         try { sat = JSON.parse(event.data); } catch { return; }
+        if (sat && sat.type === 'track') { handleTrack(sat); return; }
         if (!sat || typeof sat.norad_id !== 'string' || ![sat.lat, sat.lon, sat.alt_km].every(Number.isFinite)
             || Math.abs(sat.lat) > 90 || Math.abs(sat.lon) > 180 || sat.alt_km < 0) return;
         const timestamp = Date.parse(sat.ts);
@@ -216,7 +263,14 @@
           tooltip.className = 'tooltip';
           tooltip.textContent = `${sat.name || sat.norad_id} · ${sat.alt_km.toFixed(0)} km`;
           return tooltip;
-        });
+        })
+        .pathsData([])
+        .pathPoints('points')
+        .pathPointLat(p => p[0]).pathPointLng(p => p[1])
+        .pathPointAlt(p => p[2] / 6371)       // misma escala que las etiquetas
+        .pathColor(() => '#ffc66d')            // el amarillo de "seleccionado"
+        .pathStroke(2)
+        .pathTransitionDuration(0);
       globe.pointOfView({ lat: 25, lng: -15, altitude: 2.3 });
       const resize = () => globe.width(container.clientWidth).height(container.clientHeight);
       window.addEventListener('resize', resize);

@@ -131,7 +131,9 @@ def publish_track(norad_id):
 
 def handle_track_request(raw):
     try:
-        norad_id = str(json.loads(raw)["norad_id"])
+        req = json.loads(raw)
+        norad_id = str(req["norad_id"])
+        force = bool(req.get("force"))
     except Exception as err:
         producer.produce(DLQ_TOPIC, json.dumps({
             "failed_stage": "track_request",
@@ -146,7 +148,7 @@ def handle_track_request(raw):
     if is_new and len(track_leases) >= MAX_ACTIVE_TRACKS:
         return  # Limite de tracks activos alcanzado
     track_leases[norad_id] = time.monotonic() + TRACK_LEASE_SECONDS
-    if is_new:
+    if is_new or force:
         publish_track(norad_id)  
         producer.poll(0)
 
@@ -166,6 +168,7 @@ def main():
     consumer.subscribe([TLE_TOPIC, TRACK_REQUEST_TOPIC], on_assign=on_assign)
     print(f"Propagator running. broker={BROKER} tick={TICK_S * 1000:.0f}ms", flush=True)
     last = time.monotonic()
+    last_track = time.monotonic()
     restored = False
     while True:
         msg = consumer.poll(0.2)
