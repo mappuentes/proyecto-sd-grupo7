@@ -10,9 +10,13 @@ from datetime import datetime, timezone
 import numpy as np
 # OFFSET_BEGINNING Constante para leer desde el primer mensaje
 from confluent_kafka import Consumer, Producer, OFFSET_BEGINNING, OFFSET_END
-from sgp4.api import Satrec
+from sgp4.api import Satrec, SatrecArray
 from sgp4 import omm
 from skyfield.api import EarthSatellite, load, wgs84
+from skyfield.constants import AU_KM, DAY_S
+from skyfield.functions import mxv
+from skyfield.positionlib import Geocentric
+from skyfield.sgp4lib import TEME
 
 BROKER = os.getenv("KAFKA_BROKER", "kafka:19092")
 TLE_TOPIC = os.getenv("TLE_TOPIC", "satellites.tle.raw")
@@ -32,7 +36,8 @@ MAX_ACTIVE_TRACKS = int(os.getenv("MAX_ACTIVE_TRACKS", "20"))
 
 track_leases = {}  # norad_id -> lease_expiration_time
 ts = load.timescale()
-sats = {}  # norad_id -> (EarthSatellite, name, epoch)
+sats = {}  # norad_id -> (EarthSatellite, name, epoch, groups: set[str])
+batch = None  # (norad_ids, names, groups, SatrecArray); se rehace cuando cambia sats
 
 consumer = Consumer({
     "bootstrap.servers": BROKER,
@@ -40,7 +45,7 @@ consumer = Consumer({
     "enable.auto.commit": False, #Empezamos de 0 por si hay caída del propagador
 })
 
-# Función para leer desde el primer mensaje del topic en vez de con offset, que 
+# Función para leer desde el primer mensaje del topic en vez de con offset, que
 # dejaba el diccionario vacío si el propagador se caía y volvía a iniciar
 def on_assign(c, partitions):
     for p in partitions:
@@ -48,6 +53,25 @@ def on_assign(c, partitions):
     c.assign(partitions)
 
 producer = Producer({"bootstrap.servers": BROKER})
+
+
+def produce(topic, value, key=None):
+    # Si la cola local de Kafka se llena, vaciamos un poco y reintentamos en vez de caernos
+    while True:
+        try:
+            producer.produce(topic, key=key, value=value)
+            return
+        except BufferError:
+            producer.poll(0.5)
+
+
+def send_to_dlq(stage, err, raw):
+    produce(DLQ_TOPIC, json.dumps({
+        "failed_stage": stage,
+        "error": str(err),
+        "original_payload": raw,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }).encode())
 
 
 def build_satellite(data):
@@ -63,55 +87,84 @@ def build_satellite(data):
 
 
 def handle_tle(raw):
+    global batch
     try:
         data = json.loads(raw)
         norad_id = data["norad_id"]
-        epoch = data.get("epoch","")
+        epoch = data.get("epoch", "")
+        group = data.get("group")
         known = sats.get(norad_id)
+
+        # Un satélite puede estar en varios grupos (la ISS está en stations y en visual).
+        # El grupo se apunta aunque el TLE sea repetido, porque llega con la misma epoch.
+        groups = known[3] if known else set()
+        if group and group not in groups:
+            groups.add(group)
+            batch = None
 
         if known and epoch <= known[2]:
             return  # ignore older or same epoch
 
-        sats[norad_id] = (build_satellite(data), data.get("name", norad_id), epoch)
+        sats[norad_id] = (build_satellite(data), data.get("name", norad_id), epoch, groups)
+        batch = None
     except Exception as err:
-        producer.produce(DLQ_TOPIC, json.dumps({
-            "failed_stage": "parse/satrec",
-            "error": str(err),
-            "original_payload": raw,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }).encode())
+        send_to_dlq("parse/satrec", err, raw)
+
+
+def get_batch():
+    global batch
+    if batch is None:
+        ids = list(sats)
+        batch = (
+            ids,
+            [sats[i][1] for i in ids],
+            [sorted(sats[i][3]) for i in ids],
+            SatrecArray([sats[i][0].model for i in ids]),
+        )
+    return batch
 
 
 def propagate_all():
+    # Mismo cálculo que sat.at(t) de Skyfield, pero para todos los satélites a la vez:
+    # SGP4 en C sobre un SatrecArray y una sola rotación TEME -> GCRS
+    ids, names, groups, sat_array = get_batch()
     t = ts.now()
     iso = t.utc_iso()
-    for norad_id, (sat, name, _) in sats.items():
-        geo = sat.at(t)
-        sub = wgs84.subpoint(geo)
-        v = geo.velocity.km_per_s
+    jd = np.array([t.whole])
+    # Fracción UTC igual que EarthSatellite (usa API privada de Skyfield: fijar su versión)
+    fr = np.array([t.tai_fraction - t._leap_seconds() / DAY_S])
+    err, r, v = sat_array.sgp4(jd, fr)  # r, v: (n, 1, 3) en km y km/s, marco TEME
+    ok = err[:, 0] == 0  # SGP4 falla en órbitas decaídas; se omiten en vez de publicar NaN
+    r_gcrs = mxv(TEME.rotation_at(t).T, r[:, 0, :].T / AU_KM)
+    geo = wgs84.geographic_position_of(Geocentric(r_gcrs, None, t))
+    lats, lons, alts = geo.latitude.degrees, geo.longitude.degrees, geo.elevation.km
+    speeds = np.linalg.norm(v[:, 0, :], axis=1)  # la rotación no cambia el módulo
+    for i in np.flatnonzero(ok):
         msg = {
             "schema_version": "1.0",
-            "norad_id": norad_id,
-            "name": name,
+            "norad_id": ids[i],
+            "name": names[i],
+            "groups": groups[i],
             "ts": iso,
-            "lat": sub.latitude.degrees,
-            "lon": sub.longitude.degrees,
-            "alt_km": sub.elevation.km,
-            "velocity_kms": float(np.sqrt((v ** 2).sum())),
+            "lat": float(lats[i]),
+            "lon": float(lons[i]),
+            "alt_km": float(alts[i]),
+            "velocity_kms": float(speeds[i]),
         }
-        producer.produce(POSITION_TOPIC, key=norad_id.encode(), value=json.dumps(msg).encode())
+        produce(POSITION_TOPIC, json.dumps(msg).encode(), key=ids[i].encode())
     producer.poll(0)
 
+
 def compute_track(norad_id):
-    sat, name, epoch = sats[norad_id]
+    sat, name, epoch, _ = sats[norad_id]
     t0 = ts.now()
     # Es necesario trabajar en días porque Skyfield no permite offsets en segundos
     offsets_days = np.arange(0, TRACK_HORIZON_SECONDS + 1, TRACK_STEP_SECONDS) / 86400.0
     t = ts.tt_jd(t0.tt + offsets_days)     # 61 instantes de una vez (vectorizado)
-    sub = wgs84.subpoint(sat.at(t))        # igual que en propagate_all, pero con arrays
+    geo = wgs84.geographic_position_of(sat.at(t))
     points = [
         [round(float(la), 4), round(float(lo), 4), round(float(al), 1)]
-        for la, lo, al in zip(sub.latitude.degrees, sub.longitude.degrees, sub.elevation.km)
+        for la, lo, al in zip(geo.latitude.degrees, geo.longitude.degrees, geo.elevation.km)
     ]
     return {
         "schema_version": "1.0",
@@ -126,7 +179,7 @@ def compute_track(norad_id):
 
 def publish_track(norad_id):
     track = compute_track(norad_id)
-    producer.produce(TRACK_TOPIC, key=norad_id.encode(), value=json.dumps(track).encode())
+    produce(TRACK_TOPIC, json.dumps(track).encode(), key=norad_id.encode())
 
 
 def handle_track_request(raw):
@@ -135,12 +188,7 @@ def handle_track_request(raw):
         norad_id = str(req["norad_id"])
         force = bool(req.get("force"))
     except Exception as err:
-        producer.produce(DLQ_TOPIC, json.dumps({
-            "failed_stage": "track_request",
-            "error": str(err),
-            "original_payload": raw,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }).encode())
+        send_to_dlq("track_request", err, raw)
         return
     if norad_id not in sats:
         return  # Sin órbita no hay track
@@ -149,7 +197,7 @@ def handle_track_request(raw):
         return  # Limite de tracks activos alcanzado
     track_leases[norad_id] = time.monotonic() + TRACK_LEASE_SECONDS
     if is_new or force:
-        publish_track(norad_id)  
+        publish_track(norad_id)
         producer.poll(0)
 
 
@@ -161,7 +209,6 @@ def refresh_tracks():
         else:
             publish_track(norad_id)
     producer.poll(0)
-
 
 
 def main():

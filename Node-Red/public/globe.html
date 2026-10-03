@@ -7,12 +7,14 @@
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #070d19; font: 14px Arial, sans-serif; }
-    #globe { margin-left: 300px; width: calc(100vw - 300px); height: 100vh; height: 100dvh; overflow: hidden; }
+    #globe { position: relative; margin-left: 300px; width: calc(100vw - 300px); height: 100vh; height: 100dvh; overflow: hidden; }
     aside { position: absolute; top: 0; left: 0; width: 300px; height: 100vh; height: 100dvh;
       display: flex; flex-direction: column; gap: 10px; padding: 16px;
       overflow-y: auto; background: #f4f4f4; color: #222; border-right: 1px solid #ccc; }
     aside > * { flex-shrink: 0; }
     h1 { margin: 0 0 12px; font-size: 21px; }
+    h2 { margin: 0 0 10px; font-size: 15px; overflow-wrap: anywhere; }
+    h3 { margin: 6px 0 0; font-size: 14px; }
     p { margin: 7px 0; }
     #status { font-size: 12px; color: #555; }
     a { color: #245a91; }
@@ -23,21 +25,31 @@
     input[type=search] { width: 100%; padding: 8px; border: 1px solid #aaa; border-radius: 3px; background: #fff; color: #222; }
     input[type=checkbox] { width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; accent-color: #32689b; }
     .actions { display: flex; gap: 6px; }
+    .legend { font-size: 12px; color: #555; margin: 0; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid #687f79; vertical-align: middle; }
+
+    #group-list { list-style: none; padding: 0; margin: 0; max-height: 32vh; overflow-y: auto; border-top: 1px solid #ddd; }
+    .group-row label { display: flex; align-items: center; gap: 7px; padding: 4px 0; cursor: pointer; font-size: 13px; }
+    .group-row .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .group-row .n { color: #555; font-size: 12px; font-variant-numeric: tabular-nums; }
+
     #satellite-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; min-height: 90px; border-top: 1px solid #ddd; }
-    .satellite-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
-    .satellite-row[hidden] { display: none; }
-    .satellite-row button { flex: 1; min-width: 0; text-align: left; background: transparent; border-color: transparent; overflow-wrap: anywhere; font-size: 13px; }
+    .satellite-row { padding: 2px 0; }
+    .satellite-row button { width: 100%; text-align: left; background: transparent; border-color: transparent; overflow-wrap: anywhere; font-size: 13px; }
     .satellite-row button:hover { background: #e8e8e8; }
     .satellite-row button[aria-pressed=true] { background: #fff0ce; border-color: #c49a42; font-weight: bold; }
-    .legend { font-size: 12px; color: #555; margin: 0; }
-    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #78ffe0; border: 1px solid #687f79; }
-    .dot.selected { background: #ffc66d; margin-left: 8px; }
-    #details { border-top: 1px solid #ccc; padding-top: 12px; }
-    h2 { margin: 0 0 10px; font-size: 15px; overflow-wrap: anywhere; }
-    dl { display: grid; grid-template-columns: auto 1fr; gap: 6px; margin: 0 0 12px; font-size: 12px; }
-    dt { color: #555; } dd { margin: 0; text-align: right; }
     #empty { font-size: 13px; color: #555; }
+
+    #details { border-top: 1px solid #ccc; padding-top: 12px; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 6px; margin: 0 0 12px; font-size: 12px; }
+    dt { color: #555; } dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+
+    /* Etiquetas HTML sobre el globo: tooltip al pasar el ratón y nombre del seleccionado */
+    .tooltip, #sat-caption { position: absolute; top: 0; left: 0; pointer-events: none; white-space: nowrap; will-change: transform; }
     .tooltip { padding: 6px 8px; background: #fff; border: 1px solid #aaa; color: #222; font: 13px Arial, sans-serif; }
+    #sat-caption { padding: 2px 7px; border-radius: 3px; background: rgba(7, 13, 25, .78); border: 1px solid #c49a42;
+      color: #ffc66d; font: bold 12px Arial, sans-serif; }
+
     @media(max-width: 700px) {
       #globe { margin-left: 0; width: 100vw; height: 50dvh; }
       aside { position: relative; width: 100%; height: 50dvh; border-right: 0; border-top: 1px solid #ccc; }
@@ -45,24 +57,37 @@
   </style>
 </head>
 <body>
-  <main id="globe" aria-label="Globo terrestre 3D con las últimas posiciones de los satélites"></main>
-  <aside aria-label="Leyenda y selección de satélites">
-  <header>
-    <h1>Satélites</h1>
-    <p id="status" role="status">Cargando el globo…</p>
-    <p><span id="count">0</span> visibles de <span id="total">0</span> satélites</p>
-    <a href="/worldmap/">Abrir mapa 2D</a>
-  </header>
-    <label for="search">Buscar por nombre o NORAD</label>
+  <main id="globe" aria-label="Globo terrestre 3D con las últimas posiciones de los satélites">
+    <div id="hover-tip" class="tooltip" hidden></div>
+    <div id="sat-caption" hidden></div>
+  </main>
+  <aside aria-label="Grupos y selección de satélites">
+    <header>
+      <h1>Satélites</h1>
+      <p id="status" role="status">Cargando el globo…</p>
+      <p><span id="count">0</span> visibles de <span id="total">0</span> satélites</p>
+      <a href="/worldmap/">Abrir mapa 2D</a>
+    </header>
+
+    <h3 id="groups-title">Grupos</h3>
+    <div class="actions">
+      <button id="groups-all" type="button">Mostrar todos</button>
+      <button id="groups-none" type="button">Ocultar todos</button>
+    </div>
+    <ul id="group-list" aria-labelledby="groups-title"></ul>
+    <p id="groups-empty" class="legend">Esperando satélites…</p>
+
+    <label for="search">Buscar satélite por nombre o NORAD</label>
     <input id="search" type="search" placeholder="Ej. ISS o 25544" autocomplete="off">
-    <div class="actions"><button id="show-all" type="button">Todos</button><button id="hide-all" type="button">Ninguno</button></div>
-    <p class="legend"><span class="dot"></span> Visible <span class="dot selected"></span> Seleccionado</p>
-    <ul id="satellite-list" aria-label="Satélites disponibles"></ul>
+    <p class="legend"><span class="swatch" style="background:#ffc66d"></span> Seleccionado. El color del resto indica su grupo.</p>
+    <ul id="satellite-list" aria-label="Satélites encontrados"></ul>
     <p id="empty">Esperando satélites…</p>
+
     <section id="details" aria-label="Información del satélite" hidden>
       <h2 id="sat-name"></h2>
       <dl>
         <dt>NORAD</dt><dd id="sat-id"></dd>
+        <dt>Grupos</dt><dd id="sat-groups"></dd>
         <dt>Altitud</dt><dd id="sat-alt"></dd>
         <dt>Velocidad</dt><dd id="sat-speed"></dd>
         <dt>Latitud / longitud</dt><dd id="sat-coords"></dd>
@@ -71,26 +96,360 @@
       <label><input id="predict" type="checkbox"> Predecir próxima hora</label>
       <p id="predict-status" class="legend"></p>
       <button id="center" type="button">Centrar de nuevo</button>
-
     </section>
   </aside>
-  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
-  <script>
-    const status = document.getElementById('status');
-    const count = document.getElementById('count');
-    const container = document.getElementById('globe');
-    const satellites = new Map();
-    const hidden = new Set();
-    const rows = new Map();
-    const list = document.getElementById('satellite-list');
-    const search = document.getElementById('search');
-    let selected = null;
-    let showNew = true;
 
-        const predictBox = document.getElementById('predict');
-    const predictStatus = document.getElementById('predict-status');
-    const RENEW_MS = 30000;      // latido: renueva el lease cada 30 s
-    let predicting = null;       // NORAD con predicción activa, o null
+  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
+  <script type="module">
+    const MAX_AGE_MS = 30000;       // posiciones más antiguas se descartan
+    const MAX_RESULTS = 50;         // filas máximas en la lista de búsqueda
+    const RENEW_MS = 30000;         // latido: renueva el lease del track cada 30 s
+    const EARTH_RADIUS_KM = 6371;
+    const GLOBE_R = 100;            // radio del globo en unidades de three-globe
+    const HIT_RADIUS_PX = 15;       // distancia máxima en pantalla para clic y hover
+    const DRAG_TOLERANCE_PX = 5;    // si el ratón se mueve más, era un arrastre, no un clic
+    const MODEL_PX = 72;            // envergadura del modelo 3D en pantalla
+    // Misma versión que la que lleva dentro globe.gl 2.46.2 (three r185): objetos compatibles.
+    const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.min.js';
+    const SELECTED_COLOR = '#ffc66d';
+    const HOVER_COLOR = '#ffffff';
+    const NO_GROUP = 'sin grupo';
+    const PALETTE = ['#78ffe0', '#7ab8ff', '#ff8fb1', '#b8f27a', '#c9a4ff',
+                     '#ff9f5a', '#5ad1ff', '#ff6b6b', '#9ee6a8', '#e0e0e0'];
+    const collator = new Intl.Collator('es', { numeric: true, sensitivity: 'base' });
+
+    const $ = id => document.getElementById(id);
+    const status = $('status');
+    const container = $('globe');
+    const groupList = $('group-list');
+    const list = $('satellite-list');
+    const search = $('search');
+    const empty = $('empty');
+    const predictBox = $('predict');
+    const predictStatus = $('predict-status');
+    const hoverTip = $('hover-tip');
+    const caption = $('sat-caption');
+
+    const satellites = new Map();   // norad_id -> último mensaje (se reutiliza el mismo objeto)
+    const groups = new Map();       // nombre -> { enabled, color, item, checkbox, countEl }
+    let newGroupsEnabled = true;
+    let selected = null;
+    let hovered = null;
+    let visibleSats = [];
+    let listKey = '';
+    let lastTs = null;
+    let lastReceived = 0;
+    let socket;
+    let globe;
+    let THREE = null;               // se rellena si carga three.js; si no, no hay modelo 3D
+    let satModel = null;            // modelo 3D del satélite seleccionado
+
+    // ---------- Grupos ----------
+
+    function colorFor(name) {
+      // Color estable por nombre: el mismo grupo tiene siempre el mismo color.
+      let h = 0;
+      for (const ch of name) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+      return PALETTE[h % PALETTE.length];
+    }
+
+    function groupsOf(sat) {
+      if (Array.isArray(sat.groups) && sat.groups.length) return sat.groups;
+      return [sat.group || NO_GROUP];
+    }
+
+    function ensureGroup(name) {
+      let g = groups.get(name);
+      if (g) return g;
+      const item = document.createElement('li');
+      item.className = 'group-row';
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'name';
+      nameEl.textContent = name;
+      const countEl = document.createElement('span');
+      countEl.className = 'n';
+      label.append(checkbox, swatch, nameEl, countEl);
+      item.append(label);
+
+      g = { enabled: newGroupsEnabled, color: colorFor(name), item, checkbox, countEl };
+      swatch.style.background = g.color;
+      checkbox.checked = g.enabled;
+      checkbox.addEventListener('change', () => { g.enabled = checkbox.checked; draw(); });
+      groups.set(name, g);
+
+      const names = [...groups.keys()].sort(collator.compare);
+      const next = names[names.indexOf(name) + 1];
+      groupList.insertBefore(item, next ? groups.get(next).item : null);
+      return g;
+    }
+
+    function setAllGroups(enabled) {
+      newGroupsEnabled = enabled;
+      for (const g of groups.values()) g.enabled = enabled;
+      draw();
+    }
+
+    function isVisible(sat) {
+      return sat.norad_id === selected || groupsOf(sat).some(name => groups.get(name)?.enabled);
+    }
+
+    function colorOf(sat) {
+      if (sat.norad_id === selected) return SELECTED_COLOR;
+      if (sat === hovered) return HOVER_COLOR;
+      const name = groupsOf(sat).find(n => groups.get(n)?.enabled);
+      return name ? groups.get(name).color : PALETTE[0];
+    }
+
+    // ---------- Geometría de pantalla (sin depender de three.js) ----------
+
+    // Misma fórmula que three-globe (polar2Cartesian): posición del satélite en la escena.
+    function worldOf(sat) {
+      const r = GLOBE_R * (1 + sat.alt_km / EARTH_RADIUS_KM);
+      const phi = (90 - sat.lat) * Math.PI / 180;
+      const theta = (90 - sat.lon) * Math.PI / 180;
+      return [r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta)];
+    }
+
+    // Matriz vista-proyección de la cámara (column-major, como las guarda three.js)
+    function viewProjection(camera) {
+      camera.updateMatrixWorld();
+      const a = camera.projectionMatrix.elements, b = camera.matrixWorldInverse.elements, m = new Array(16);
+      for (let c = 0; c < 4; c++)
+        for (let r = 0; r < 4; r++)
+          m[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+      return m;
+    }
+
+    // ¿La Tierra tapa el segmento cámara -> punto?
+    function hiddenByEarth(cam, p) {
+      const dx = p[0] - cam.x, dy = p[1] - cam.y, dz = p[2] - cam.z;
+      const t = -(cam.x * dx + cam.y * dy + cam.z * dz) / (dx * dx + dy * dy + dz * dz);
+      if (t <= 0 || t >= 1) return false;
+      const x = cam.x + t * dx, y = cam.y + t * dy, z = cam.z + t * dz;
+      return x * x + y * y + z * z < GLOBE_R * GLOBE_R;
+    }
+
+    // Coordenadas de pantalla de un satélite, o null si está tapado o detrás de la cámara
+    function screenOf(sat, m, cam, w, h) {
+      const p = worldOf(sat);
+      const cw = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+      if (cw <= 0 || hiddenByEarth(cam, p)) return null;
+      const cx = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / cw;
+      const cy = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / cw;
+      return { x: (cx + 1) * w / 2, y: (1 - cy) * h / 2 };
+    }
+
+    // Satélite visible más cercano a un punto de la pantalla (dentro de HIT_RADIUS_PX)
+    function pickAt(x, y) {
+      const camera = globe.camera();
+      const m = viewProjection(camera);
+      const w = container.clientWidth, h = container.clientHeight;
+      let best = null, bestD2 = HIT_RADIUS_PX * HIT_RADIUS_PX;
+      for (const sat of visibleSats) {
+        const s = screenOf(sat, m, camera.position, w, h);
+        if (!s) continue;
+        const d2 = (s.x - x) ** 2 + (s.y - y) ** 2;
+        if (d2 < bestD2) { bestD2 = d2; best = { sat, x: s.x, y: s.y }; }
+      }
+      return best;
+    }
+
+    function localPoint(event) {
+      const rect = container.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
+
+    // ---------- Clic y hover por proximidad ----------
+
+    let pointerDown = null;
+    let lastPointer = null;
+    let hoverQueued = false;
+
+    function setHovered(hit) {
+      const sat = hit ? hit.sat : null;
+      if (sat) {
+        hoverTip.textContent = `${sat.name || sat.norad_id}, ${sat.alt_km.toFixed(0)} km (${groupsOf(sat).join(', ')})`;
+        hoverTip.style.transform = `translate(${hit.x + 14}px, ${hit.y + 14}px)`;
+      }
+      hoverTip.hidden = !sat;
+      container.style.cursor = sat ? 'pointer' : '';
+      if (sat !== hovered) {
+        hovered = sat;
+        globe.labelsData(visibleSats);    // repinta el punto resaltado
+      }
+    }
+
+    function updateHover() {
+      hoverQueued = false;
+      if (!lastPointer || pointerDown) return;
+      const p = localPoint(lastPointer);
+      setHovered(pickAt(p.x, p.y));
+    }
+
+    container.addEventListener('pointermove', event => {
+      lastPointer = event;
+      if (!hoverQueued) { hoverQueued = true; requestAnimationFrame(updateHover); }
+    });
+    container.addEventListener('pointerleave', () => { lastPointer = null; setHovered(null); });
+    container.addEventListener('pointerdown', event => {
+      if (event.button === 0) pointerDown = { x: event.clientX, y: event.clientY };
+      setHovered(null);
+    });
+    container.addEventListener('pointerup', event => {
+      if (!pointerDown || event.button !== 0) return;
+      const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
+      pointerDown = null;
+      if (moved > DRAG_TOLERANCE_PX) return;   // fue un arrastre para girar el globo
+      const p = localPoint(event);
+      const hit = pickAt(p.x, p.y);
+      if (hit) selectSatellite(hit.sat.norad_id);
+    });
+
+    // ---------- Modelo 3D del satélite seleccionado ----------
+
+    function canvasTexture(width, height, paint) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      paint(canvas.getContext('2d'), width, height);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 4;
+      return texture;
+    }
+
+    // Ejes locales (con objectFacesSurface): X = este, Y = norte, Z = hacia el espacio.
+    // El modelo mira con +Y hacia donde avanza y la antena apunta a la Tierra (-Z).
+    function buildSatelliteModel() {
+      const model = new THREE.Group();
+
+      // Aislamiento térmico dorado (MLI) con arrugas
+      const foil = canvasTexture(128, 128, (ctx, w, h) => {
+        ctx.fillStyle = '#b8861f';
+        ctx.fillRect(0, 0, w, h);
+        for (let i = 0; i < 70; i++) {
+          const light = Math.random() < 0.5;
+          ctx.fillStyle = light ? 'rgba(255, 226, 140, .35)' : 'rgba(70, 45, 5, .35)';
+          ctx.beginPath();
+          const x = Math.random() * w, y = Math.random() * h;
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + (Math.random() - .5) * 50, y + (Math.random() - .5) * 50);
+          ctx.lineTo(x + (Math.random() - .5) * 50, y + (Math.random() - .5) * 50);
+          ctx.fill();
+        }
+      });
+      const bodyMat = new THREE.MeshPhongMaterial({ map: foil, specular: 0x8a6a2a, shininess: 70 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1, 1.4, 1), bodyMat);
+      model.add(body);
+
+      // Paneles solares: células azules por la cara que mira al espacio, estructura gris por detrás
+      const cells = canvasTexture(256, 96, (ctx, w, h) => {
+        ctx.fillStyle = '#9aa1ab';
+        ctx.fillRect(0, 0, w, h);
+        const cols = 12, rows = 4, gap = 2;
+        const cw = (w - gap) / cols, ch = (h - gap) / rows;
+        for (let c = 0; c < cols; c++)
+          for (let r = 0; r < rows; r++) {
+            const shade = 40 + Math.random() * 18;
+            ctx.fillStyle = `rgb(${shade * .35}, ${shade * .55}, ${shade * 2.1})`;
+            ctx.fillRect(gap + c * cw, gap + r * ch, cw - gap, ch - gap);
+          }
+      });
+      const panelFront = new THREE.MeshPhongMaterial({ map: cells, specular: 0x9ab0ff, shininess: 110 });
+      const panelBack = new THREE.MeshPhongMaterial({ color: 0x7c828c, shininess: 20 });
+      const frame = new THREE.MeshPhongMaterial({ color: 0xb9bec6, shininess: 50 });
+      const panelGeo = new THREE.BoxGeometry(2.6, 1.3, 0.04);
+      const boomGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 8);
+      for (const side of [-1, 1]) {
+        // Orden de caras de BoxGeometry: +x, -x, +y, -y, +z, -z
+        const panel = new THREE.Mesh(panelGeo, [frame, frame, frame, frame, panelFront, panelBack]);
+        panel.position.x = side * (0.5 + 0.55 + 1.3);
+        model.add(panel);
+        const boom = new THREE.Mesh(boomGeo, frame);
+        boom.rotation.z = Math.PI / 2;
+        boom.position.x = side * (0.5 + 0.275);
+        model.add(boom);
+      }
+
+      // Antena parabólica apuntando a la Tierra
+      const white = new THREE.MeshPhongMaterial({ color: 0xe9ecef, shininess: 40, side: THREE.DoubleSide });
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.5, 28, 8, 0, Math.PI * 2, 0, 0.55), white);
+      dish.rotation.x = Math.PI / 2;            // el polo de la esfera pasa a +Z: la concavidad mira a -Z
+      dish.position.z = -0.5 - 0.5 - 0.02;
+      model.add(dish);
+      const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.45, 6), frame);
+      feed.rotation.x = Math.PI / 2;
+      feed.position.z = -0.5 - 0.3;
+      model.add(feed);
+
+      // Detalles en la cara superior: sensor estelar y antena de látigo
+      const sensor = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.22, 16),
+        new THREE.MeshPhongMaterial({ color: 0x2b2f36, specular: 0x666666, shininess: 90 }));
+      sensor.rotation.x = Math.PI / 2;
+      sensor.position.set(0.22, 0.35, 0.6);
+      model.add(sensor);
+      const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.8, 5), frame);
+      whip.rotation.x = Math.PI / 2;
+      whip.position.set(-0.3, -0.45, 0.9);
+      model.add(whip);
+
+      model.userData.span = 2 * (0.5 + 0.55 + 2.6);   // envergadura de punta a punta de los paneles
+      satModel = model;
+      return model;
+    }
+
+    // Rumbo en grados (0 = norte, 90 = este) entre dos posiciones
+    function bearing(lat1, lon1, lat2, lon2) {
+      const toRad = Math.PI / 180;
+      const p1 = lat1 * toRad, p2 = lat2 * toRad, dl = (lon2 - lon1) * toRad;
+      const y = Math.sin(dl) * Math.cos(p2);
+      const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+      return Math.atan2(y, x) / toRad;
+    }
+
+    // Cada fotograma: tamaño constante en pantalla y nombre colocado bajo el modelo.
+    const tmpPos = { x: 0, y: 0, z: 0 };
+    function frameLoop() {
+      requestAnimationFrame(frameLoop);
+      const sat = satellites.get(selected);
+      if (!globe || !sat) { caption.hidden = true; return; }
+      const camera = globe.camera();
+      const w = container.clientWidth, h = container.clientHeight;
+
+      if (satModel && satModel.parent) {
+        const [x, y, z] = worldOf(sat);
+        const dist = Math.hypot(camera.position.x - x, camera.position.y - y, camera.position.z - z);
+        const worldPerPx = 2 * dist * Math.tan(camera.fov * Math.PI / 360) / h;
+        satModel.scale.setScalar(MODEL_PX * worldPerPx / satModel.userData.span);
+      }
+
+      const s = screenOf(sat, viewProjection(camera), camera.position, w, h);
+      caption.hidden = !s;
+      if (s) {
+        caption.textContent = sat.name || sat.norad_id;
+        const below = satModel ? MODEL_PX / 2 + 6 : 12;
+        caption.style.transform = `translate(calc(${s.x}px - 50%), ${s.y + below}px)`;
+      }
+    }
+
+    function enableModel() {
+      globe
+        .objectLat('lat').objectLng('lon')
+        .objectAltitude(sat => sat.alt_km / EARTH_RADIUS_KM)
+        .objectFacesSurface(true)
+        .objectRotation(sat => ({ z: -(sat._heading || 0) }))
+        .objectThreeObject(buildSatelliteModel);
+      draw();
+    }
+
+    // ---------- Predicción de trayectoria ----------
+
+    let predicting = null;
     let renewTimer = null;
 
     function sendTrack(type, id) {
@@ -99,7 +458,7 @@
     }
 
     function startPrediction(id) {
-      stopPrediction();                       // una sola a la vez
+      stopPrediction();
       predicting = id;
       sendTrack('track_on', id);
       renewTimer = setInterval(() => sendTrack('track_on', id), RENEW_MS);
@@ -112,11 +471,10 @@
       renewTimer = null;
       predicting = null;
       predictStatus.textContent = '';
-      if (globe) globe.pathsData([]);         // borra la línea
+      if (globe) globe.pathsData([]);
     }
 
     function handleTrack(data) {
-      // Una trayectoria de un satélite que ya no interesa (llegó tarde) se ignora.
       if (data.norad_id !== predicting || !Array.isArray(data.points)) return;
       globe.pathsData([{ points: data.points }]);
       predictStatus.textContent = `Calculada a las ${new Date(data.generated_at).toLocaleTimeString('es-ES')}`;
@@ -126,102 +484,122 @@
       if (predictBox.checked && selected) startPrediction(selected); else stopPrediction();
     });
 
-
-    function setVisibility(id, visible) {
-      if (visible) hidden.delete(id); else hidden.add(id);
-      if (!visible && selected === id) selected = null;
-      draw();
-    }
+    // ---------- Selección ----------
 
     function selectSatellite(id) {
       const sat = satellites.get(id);
       if (!sat) return;
       if (predicting && predicting !== id) stopPrediction();
       selected = id;
-      hidden.delete(id);
       draw();
-      globe.pointOfView({ lat: sat.lat, lng: sat.lon, altitude: 1.4 }, 700);
+      const altitude = Math.max(1.4, sat.alt_km / EARTH_RADIUS_KM + 1.5);
+      globe.pointOfView({ lat: sat.lat, lng: sat.lon, altitude }, 700);
+    }
+
+    // ---------- Dibujo ----------
+
+    let drawTimer = null;
+    function scheduleDraw() {
+      if (drawTimer) return;
+      drawTimer = setTimeout(() => { drawTimer = null; draw(); }, 250);
+    }
+
+    function draw() {
+      const now = Date.now();
+      const counts = new Map();
+      visibleSats = [];
+      for (const [id, sat] of satellites) {
+        if (now - Date.parse(sat.ts) > MAX_AGE_MS) { satellites.delete(id); continue; }
+        for (const name of groupsOf(sat)) {
+          ensureGroup(name);
+          counts.set(name, (counts.get(name) || 0) + 1);
+        }
+      }
+      if (selected && !satellites.has(selected)) selected = null;
+      if (hovered && !satellites.has(hovered.norad_id)) hovered = null;
+      if (predicting && predicting !== selected) stopPrediction();
+      for (const sat of satellites.values()) if (isVisible(sat)) visibleSats.push(sat);
+
+      globe.labelsData(visibleSats);
+      const selectedSat = satellites.get(selected);
+      globe.objectsData(THREE && selectedSat ? [selectedSat] : []);
+      if (!selectedSat) satModel = null;
+
+      $('count').textContent = visibleSats.length;
+      $('total').textContent = satellites.size;
+      for (const [name, g] of groups) {
+        g.countEl.textContent = counts.get(name) || 0;
+        g.checkbox.checked = g.enabled;
+      }
+      $('groups-empty').hidden = groups.size > 0;
+
+      if (socket && socket.readyState === WebSocket.OPEN && now - lastReceived > MAX_AGE_MS)
+        status.textContent = 'Conectado, sin posiciones recientes. Esperando datos…';
+      else if (lastTs)
+        status.textContent = `Actualizado: ${new Date(lastTs).toLocaleTimeString('es-ES')}`;
+
+      renderPanel();
     }
 
     function renderPanel() {
-      for (const [id, row] of rows) {
-        if (!satellites.has(id)) { row.item.remove(); rows.delete(id); }
-      }
       const query = search.value.trim().toLocaleLowerCase('es');
-      let matches = 0;
-      for (const sat of satellites.values()) {
-        const id = sat.norad_id;
-        let row = rows.get(id);
-        if (!row) {
+      const pool = query
+        ? [...satellites.values()].filter(s => `${s.name || ''} ${s.norad_id}`.toLocaleLowerCase('es').includes(query))
+        : visibleSats.slice();
+      pool.sort((a, b) => collator.compare(a.name || a.norad_id, b.name || b.norad_id));
+      const shown = pool.slice(0, MAX_RESULTS);
+
+      const key = `${selected}|${shown.map(s => s.norad_id).join(',')}`;
+      if (key !== listKey) {
+        listKey = key;
+        list.replaceChildren(...shown.map(sat => {
           const item = document.createElement('li');
           item.className = 'satellite-row';
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
-          checkbox.addEventListener('change', () => setVisibility(id, checkbox.checked));
           const button = document.createElement('button');
           button.type = 'button';
-          button.addEventListener('click', () => selectSatellite(id));
-          item.append(checkbox, button);
-          list.append(item);
-          row = { item, checkbox, button };
-          rows.set(id, row);
-        }
-        const name = sat.name || id;
-        row.checkbox.checked = !hidden.has(id);
-        row.checkbox.setAttribute('aria-label', `Mostrar ${name} (NORAD ${id})`);
-        row.button.textContent = name;
-        row.button.setAttribute('aria-pressed', String(selected === id));
-        row.item.hidden = !`${name} ${id}`.toLocaleLowerCase('es').includes(query);
-        if (!row.item.hidden) matches++;
+          button.textContent = sat.name || sat.norad_id;
+          button.title = `NORAD ${sat.norad_id}. Grupos: ${groupsOf(sat).join(', ')}`;
+          button.setAttribute('aria-pressed', String(sat.norad_id === selected));
+          button.addEventListener('click', () => selectSatellite(sat.norad_id));
+          item.append(button);
+          return item;
+        }));
       }
-      const empty = document.getElementById('empty');
-      empty.hidden = matches > 0;
-      empty.textContent = satellites.size ? 'No hay coincidencias.' : 'Esperando satélites con datos recientes…';
+
+      let message = '';
+      if (!satellites.size) message = 'Esperando satélites con datos recientes…';
+      else if (!pool.length) message = query ? 'No hay coincidencias.' : 'Activa algún grupo o busca un satélite.';
+      else if (pool.length > MAX_RESULTS) message = `Mostrando ${MAX_RESULTS} de ${pool.length}. Escribe para filtrar.`;
+      empty.textContent = message;
+      empty.hidden = !message;
+
       const sat = satellites.get(selected);
-      document.getElementById('details').hidden = !sat;
+      $('details').hidden = !sat;
       if (sat) {
         predictBox.checked = predicting === selected;
-        document.getElementById('sat-name').textContent = sat.name || sat.norad_id;
-        document.getElementById('sat-id').textContent = sat.norad_id;
-        document.getElementById('sat-alt').textContent = `${sat.alt_km.toFixed(1)} km`;
-        document.getElementById('sat-speed').textContent = Number.isFinite(sat.velocity_kms) ? `${sat.velocity_kms.toFixed(2)} km/s` : 'No disponible';
-        document.getElementById('sat-coords').textContent = `${sat.lat.toFixed(2)}° / ${sat.lon.toFixed(2)}°`;
-        document.getElementById('sat-time').textContent = new Date(sat.ts).toLocaleTimeString('es-ES');
+        $('sat-name').textContent = sat.name || sat.norad_id;
+        $('sat-id').textContent = sat.norad_id;
+        $('sat-groups').textContent = groupsOf(sat).join(', ');
+        $('sat-alt').textContent = `${sat.alt_km.toFixed(1)} km`;
+        $('sat-speed').textContent = Number.isFinite(sat.velocity_kms) ? `${sat.velocity_kms.toFixed(2)} km/s` : 'No disponible';
+        $('sat-coords').textContent = `${sat.lat.toFixed(2)}° / ${sat.lon.toFixed(2)}°`;
+        $('sat-time').textContent = new Date(sat.ts).toLocaleTimeString('es-ES');
       }
     }
 
     search.addEventListener('input', renderPanel);
-    document.getElementById('show-all').addEventListener('click', () => {
-      showNew = true; hidden.clear(); draw();
-    });
-    document.getElementById('hide-all').addEventListener('click', () => {
-      showNew = false;
-      for (const id of satellites.keys()) hidden.add(id);
-      selected = null; draw();
-    });
-    document.getElementById('center').addEventListener('click', () => selectSatellite(selected));
-    const MAX_AGE_MS = 30000;
-    let socket;
-    let globe;
-    let lastReceived = 0;
+    $('groups-all').addEventListener('click', () => setAllGroups(true));
+    $('groups-none').addEventListener('click', () => setAllGroups(false));
+    $('center').addEventListener('click', () => { if (selected) selectSatellite(selected); });
 
-    function draw() {
-      const now = Date.now();
-      for (const [id, sat] of satellites) {
-        if (now - Date.parse(sat.ts) > MAX_AGE_MS) satellites.delete(id);
-      }
-      if (!satellites.has(selected)) selected = null;
-      if (predicting && predicting !== selected) stopPrediction();
-      const visible = [...satellites.values()].filter(sat => !hidden.has(sat.norad_id));
-      globe.labelsData(visible);
-      count.textContent = visible.length;
-      document.getElementById('total').textContent = satellites.size;
-      renderPanel();
-    }
+    // ---------- WebSocket ----------
 
     function connect() {
       socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/globe`);
-      socket.onopen = () => { status.textContent = 'Conectado. Esperando posiciones…'; if (predicting) sendTrack('track_on', predicting);};
+      socket.onopen = () => {
+        status.textContent = 'Conectado. Esperando posiciones…';
+        if (predicting) sendTrack('track_on', predicting);
+      };
       socket.onmessage = event => {
         let sat;
         try { sat = JSON.parse(event.data); } catch { return; }
@@ -230,13 +608,22 @@
             || Math.abs(sat.lat) > 90 || Math.abs(sat.lon) > 180 || sat.alt_km < 0) return;
         const timestamp = Date.parse(sat.ts);
         if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > MAX_AGE_MS) return;
+        if (sat.groups !== undefined && !(Array.isArray(sat.groups) && sat.groups.every(g => typeof g === 'string')))
+          delete sat.groups;
+
         const previous = satellites.get(sat.norad_id);
         if (previous && Date.parse(previous.ts) > timestamp) return;
-        if (!previous && !showNew) hidden.add(sat.norad_id);
-        satellites.set(sat.norad_id, sat);
+        if (previous) {
+          // Rumbo del seleccionado para orientar el modelo 3D (los GEO casi no se mueven: se conserva el último).
+          if (sat.norad_id === selected && Math.hypot(sat.lat - previous.lat, sat.lon - previous.lon) > 1e-4)
+            previous._heading = bearing(previous.lat, previous.lon, sat.lat, sat.lon);
+          Object.assign(previous, sat);   // misma referencia: globe.gl mueve el punto en vez de recrearlo
+        } else {
+          satellites.set(sat.norad_id, sat);
+        }
         lastReceived = Date.now();
-        status.textContent = `Actualizado: ${new Date(timestamp).toLocaleTimeString('es-ES')}`;
-        draw();
+        lastTs = timestamp;
+        scheduleDraw();
       };
       socket.onclose = () => {
         status.textContent = 'Sin conexión. Reintentando…';
@@ -245,44 +632,51 @@
       socket.onerror = () => socket.close();
     }
 
+    // ---------- Globo ----------
+
     try {
       globe = new Globe(container, { animateIn: false })
         .backgroundColor('#070d19')
         .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe@2.45.1/example/img/earth-blue-marble.jpg')
         .showGraticules(true)
         .atmosphereAltitude(0.025)
+        // El clic y el hover los resolvemos nosotros por proximidad: desactivar el raycasting
+        // de globe.gl ahorra trabajo en cada movimiento del ratón.
+        .enablePointerInteraction(false)
         .labelsData([])
         .labelLat('lat').labelLng('lon')
-        .labelAltitude(sat => sat.alt_km / 6371)
-        .labelText('name').labelSize(1).labelDotRadius(0.5)
+        .labelAltitude(sat => sat.alt_km / EARTH_RADIUS_KM)
+        // Solo puntos: el nombre del seleccionado va en una etiqueta HTML nítida (#sat-caption).
+        // Ojo: tiene que ser una función. Un string suelto globe.gl lo toma como nombre de propiedad.
+        .labelText(() => '')
+        .labelSize(1.2).labelResolution(2)
+        .labelDotRadius(sat => sat === hovered ? 0.6 : 0.35)
         .labelsTransitionDuration(0)
-        .labelColor(sat => sat.norad_id === selected ? '#ffc66d' : '#78ffe0')
-        .onLabelClick(sat => selectSatellite(sat.norad_id))
-        .labelLabel(sat => {
-          const tooltip = document.createElement('div');
-          tooltip.className = 'tooltip';
-          tooltip.textContent = `${sat.name || sat.norad_id} · ${sat.alt_km.toFixed(0)} km`;
-          return tooltip;
-        })
+        .labelColor(colorOf)
+        .objectsData([])
         .pathsData([])
         .pathPoints('points')
         .pathPointLat(p => p[0]).pathPointLng(p => p[1])
-        .pathPointAlt(p => p[2] / 6371)       // misma escala que las etiquetas
-        .pathColor(() => '#ffc66d')            // el amarillo de "seleccionado"
+        .pathPointAlt(p => p[2] / EARTH_RADIUS_KM)
+        .pathColor(() => SELECTED_COLOR)
         .pathStroke(2)
         .pathTransitionDuration(0);
       globe.pointOfView({ lat: 25, lng: -15, altitude: 2.3 });
+      // globe.gl vacía el contenedor al crearse: el tooltip y la etiqueta se añaden después.
+      container.append(hoverTip, caption);
       const resize = () => globe.width(container.clientWidth).height(container.clientHeight);
       window.addEventListener('resize', resize);
       resize();
       connect();
-      setInterval(() => {
-        draw();
-        if (socket.readyState === WebSocket.OPEN && Date.now() - lastReceived > MAX_AGE_MS)
-          status.textContent = 'Conectado, sin posiciones recientes. Esperando datos…';
-      }, 5000);
+      setInterval(draw, 5000);
+      requestAnimationFrame(frameLoop);
+
+      // El modelo 3D es un extra: si three.js no carga, todo lo demás sigue funcionando.
+      import(THREE_URL)
+        .then(module => { THREE = module; enableModel(); })
+        .catch(error => console.warn('No se pudo cargar three.js; el seleccionado se verá sin modelo 3D.', error));
     } catch (error) {
-      status.textContent = 'No se pudo cargar el globo. Comprueba Internet y que WebGL esté disponible.';
+      status.textContent = 'No se pudo cargar el globo. Comprueba la conexión a Internet y que WebGL esté disponible.';
       console.error(error);
     }
   </script>
