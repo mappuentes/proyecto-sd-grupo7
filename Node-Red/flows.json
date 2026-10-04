@@ -55,7 +55,7 @@
         ],
         "repeat": "21600",
         "crontab": "",
-        "once": false,
+        "once": true,
         "onceDelay": 2,
         "topic": "",
         "payload": "",
