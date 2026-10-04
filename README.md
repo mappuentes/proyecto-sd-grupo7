@@ -6,15 +6,30 @@ encarga de la ingesta, el cálculo orbital y la visualización.
 
 ## Estado actual
 
-- Kafka funciona en modo KRaft y tiene almacenamiento persistente.
-- Los topics `satellites.tle.raw`, `satellites.position` y `satellites.dlq` los crea
-  automáticamente el servicio `kafka-init` al arrancar.
-- Node-RED descarga el grupo `stations` de CelesTrak y publica un OMM por satélite.
-- El propagador (contenedor aparte) consume las órbitas, aplica SGP4 y publica las
-  posiciones cada `TICK_MS`.
-- Node-RED consume `satellites.position` y mueve los marcadores reales en Worldmap.
-- El arranque está coordinado para que el propagador y Node-RED no arranquen hasta que
-  Kafka esté sano y los topics existan.
+## Estado actual
+
+- Kafka funciona en modo KRaft con **tres brokers** (cada uno es broker y controlador a la vez),
+  cada uno con su propio volumen persistente. El clúster sigue funcionando si cae uno de ellos.
+- Los cinco topics (`satellites.tle.raw`, `satellites.position`, `satellites.track.request`,
+  `satellites.track` y `satellites.dlq`) los crea automáticamente el servicio `kafka-init` al
+  arrancar, todos con una partición, factor de replicación 3 y `min.insync.replicas=2`.
+  `satellites.tle.raw` está compactado por NORAD ID; el resto usa retención por tiempo. Cada topic
+  fija además `segment.ms` para que la retención y la compactación se apliquen de verdad con
+  nuestro volumen de datos (ver «Topics y consumidores»).
+- Node-RED descarga cada 6 horas varios grupos de CelesTrak (`stations`, `visual`, `science`,
+  `weather`, `gnss`, `iridium-NEXT`), con una petición cada 2 segundos, y publica un OMM por
+  satélite indicando su grupo.
+- El propagador (contenedor aparte) consume las órbitas, aplica SGP4 a todos los satélites a la vez
+  (cálculo vectorizado) y publica las posiciones cada `TICK_MS`.
+- Bajo demanda, el propagador calcula la trayectoria de un satélite durante su **próxima órbita
+  completa** (el horizonte se adapta al periodo de cada satélite) y la publica como traza sobre el
+  terreno (`TRACK_FRAME=ground`).
+- Node-RED consume las posiciones y las trayectorias y las envía a dos vistas: el mapa 2D
+  (Worldmap) y el globo 3D (`/globe`). Al globo le convierte la trayectoria a la órbita en el
+  espacio; al mapa se la envía como traza sobre el terreno.
+- Los mensajes que el propagador no puede procesar se publican en `satellites.dlq`.
+- El arranque está coordinado para que el propagador y Node-RED no arranquen hasta que los tres
+  brokers estén sanos y los topics existan.
 
 ## Arquitectura propuesta
 

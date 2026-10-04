@@ -18,7 +18,7 @@ from skyfield.functions import mxv
 from skyfield.positionlib import Geocentric
 from skyfield.sgp4lib import TEME
 
-BROKER = os.getenv("KAFKA_BROKER", "kafka:19092")
+BROKER = os.getenv("KAFKA_BROKER", "kafka1:19092,kafka2:19092,kafka3:19092")
 TLE_TOPIC = os.getenv("TLE_TOPIC", "satellites.tle.raw")
 POSITION_TOPIC = os.getenv("POSITION_TOPIC", "satellites.position")
 DLQ_TOPIC = os.getenv("DLQ_TOPIC", "satellites.dlq")

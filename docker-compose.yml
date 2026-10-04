@@ -1,63 +1,120 @@
+# Configuración común de los tres brokers de Kafka (KRaft, broker + controller en cada nodo).
+# Con 3 controladores el quórum necesita mayoría (2 de 3): el clúster sigue funcionando si cae uno.
+# Con 2 no serviría: la mayoría de 2 es 2, así que perder uno pararía el clúster.
+x-kafka-common: &kafka-common
+  image: confluentinc/cp-kafka:7.7.1
+  restart: unless-stopped
+  networks:
+    - satellite-network
+
+x-kafka-env: &kafka-env
+  KAFKA_PROCESS_ROLES: 'broker,controller'
+  KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka1:29093,2@kafka2:29093,3@kafka3:29093'
+  KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,INTERNAL://0.0.0.0:19092'
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT'
+  KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+  # Los brokers replican entre ellos por la red de Docker (INTERNAL), no por localhost
+  KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_HEAP_OPTS: '-Xmx512m -Xms512m'
+  CLUSTER_ID: '5L6g3nShT-eMCtK--X86sw'
+
+x-kafka-healthcheck: &kafka-healthcheck
+  test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+  interval: 5s
+  timeout: 5s
+  retries: 12
+  start_period: 15s
+
 services:
-  kafka:
-    image: confluentinc/cp-kafka:7.7.1
-    container_name: kafka
+  kafka1:
+    <<: *kafka-common
+    container_name: kafka1
     ports:
       - "9092:9092"
     environment:
+      <<: *kafka-env
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,INTERNAL://0.0.0.0:19092'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092,INTERNAL://kafka:19092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      CLUSTER_ID: '5L6g3nShT-eMCtK--X86sw'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092,INTERNAL://kafka1:19092'
     volumes:
-      - kafka-data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    networks:
-      - satellite-network
+      - kafka1-data:/var/lib/kafka/data
+    healthcheck: *kafka-healthcheck
+
+  kafka2:
+    <<: *kafka-common
+    container_name: kafka2
+    ports:
+      - "9094:9092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9094,INTERNAL://kafka2:19092'
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+    healthcheck: *kafka-healthcheck
+
+  kafka3:
+    <<: *kafka-common
+    container_name: kafka3
+    ports:
+      - "9096:9092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9096,INTERNAL://kafka3:19092'
+    volumes:
+      - kafka3-data:/var/lib/kafka/data
+    healthcheck: *kafka-healthcheck
 
   # Contenedor de un solo uso: crea los topics y termina (Exited 0).
   # propagator y nodered esperan a que acabe, para que ningun cliente
   # se suscriba a un topic que todavia no existe.
+  # segment.ms: Kafka solo borra o compacta segmentos cerrados; sin él el segmento activo
+  # no se cierra hasta 1 GB o 7 días y la retención/compactación no se aplicaría.
   kafka-init:
     image: confluentinc/cp-kafka:7.7.1
     container_name: kafka-init
     depends_on:
-      kafka:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
         condition: service_healthy
     restart: "no"
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         set -e
-        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
-          --topic satellites.tle.raw --partitions 1 --replication-factor 1 \
-          --config cleanup.policy=compact
-        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
-          --topic satellites.position --partitions 1 --replication-factor 1 \
-          --config cleanup.policy=delete --config retention.ms=3600000
-        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
-          --topic satellites.dlq --partitions 1 --replication-factor 1
-        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
-          --topic satellites.track.request --partitions 1 --replication-factor 1 \
-          --config cleanup.policy=delete --config retention.ms=300000
-        kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists \
-          --topic satellites.track --partitions 1 --replication-factor 1 \
-          --config cleanup.policy=delete --config retention.ms=600000
-        kafka-topics --bootstrap-server kafka:19092 --list
+        BS=kafka1:19092,kafka2:19092,kafka3:19092
+        kafka-topics --bootstrap-server $$BS --create --if-not-exists \
+          --topic satellites.tle.raw --partitions 1 --replication-factor 3 \
+          --config min.insync.replicas=2 \
+          --config cleanup.policy=compact --config segment.ms=3600000 \
+          --config min.cleanable.dirty.ratio=0.1
+        kafka-topics --bootstrap-server $$BS --create --if-not-exists \
+          --topic satellites.position --partitions 1 --replication-factor 3 \
+          --config min.insync.replicas=2 \
+          --config cleanup.policy=delete --config retention.ms=3600000 --config segment.ms=600000
+        kafka-topics --bootstrap-server $$BS --create --if-not-exists \
+          --topic satellites.dlq --partitions 1 --replication-factor 3 \
+          --config min.insync.replicas=2 \
+          --config cleanup.policy=delete --config retention.ms=604800000
+        kafka-topics --bootstrap-server $$BS --create --if-not-exists \
+          --topic satellites.track.request --partitions 1 --replication-factor 3 \
+          --config min.insync.replicas=2 \
+          --config cleanup.policy=delete --config retention.ms=300000 --config segment.ms=60000
+        kafka-topics --bootstrap-server $$BS --create --if-not-exists \
+          --topic satellites.track --partitions 1 --replication-factor 3 \
+          --config min.insync.replicas=2 \
+          --config cleanup.policy=delete --config retention.ms=600000 --config segment.ms=120000
+        kafka-topics --bootstrap-server $$BS --describe
     networks:
       - satellite-network
 
@@ -66,7 +123,7 @@ services:
     image: satellite-radar/propagator:local
     container_name: propagator
     environment:
-      KAFKA_BROKER: kafka:19092
+      KAFKA_BROKER: kafka1:19092,kafka2:19092,kafka3:19092
       TLE_TOPIC: satellites.tle.raw
       POSITION_TOPIC: satellites.position
       DLQ_TOPIC: satellites.dlq
@@ -79,6 +136,7 @@ services:
       MAX_ACTIVE_TRACKS: 20
       GROUP_ID: orbit-propagator
       TICK_MS: 5000
+      TRACK_FRAME: "ground"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -104,7 +162,9 @@ services:
       - satellite-network
 
 volumes:
-  kafka-data:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
   node_red_data:
 
 networks:
