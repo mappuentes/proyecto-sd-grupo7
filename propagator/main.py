@@ -28,14 +28,23 @@ TICK_S = float(os.getenv("TICK_MS", "1000")) / 1000.0
 # Variables de entorno para el track de satélites
 TRACK_REQUEST_TOPIC = os.getenv("TRACK_REQUEST_TOPIC", "satellites.track.request")
 TRACK_TOPIC = os.getenv("TRACK_TOPIC", "satellites.track")
-TRACK_HORIZON_SECONDS = int(os.getenv("TRACK_HORIZON_MINUTES", "60")) * 60
-TRACK_STEP_SECONDS = int(os.getenv("TRACK_STEP_SECONDS", "60"))
+# El horizonte de la trayectoria se adapta al periodo de cada órbita (ver compute_track)
+TRACK_ORBITS = float(os.getenv("TRACK_ORBITS", "1"))              # órbitas completas a dibujar
+TRACK_POINTS = int(os.getenv("TRACK_POINTS", "120"))              # puntos por trayectoria, sea cual sea la órbita
+TRACK_MAX_HORIZON_S = float(os.getenv("TRACK_MAX_HORIZON_MINUTES", "1440")) * 60   # tope: 24 h
+TRACK_FALLBACK_HORIZON_S = 3600.0                                 # si el periodo no es válido
+# Sistema de referencia de la trayectoria:
+#   inertial -> la órbita real en el espacio, con la Tierra congelada en el instante actual
+#               (elipse cerrada; es lo que se espera ver al dibujar una órbita completa)
+#   ground   -> posiciones relativas a la Tierra que gira (traza sobre el terreno elevada);
+#               con órbitas largas se deforma en bucles porque la Tierra gira debajo
+TRACK_FRAME = os.getenv("TRACK_FRAME", "inertial").lower()
 TRACK_REFRESH_SECONDS = int(os.getenv("TRACK_REFRESH_SECONDS", "60"))
 TRACK_LEASE_SECONDS = int(os.getenv("TRACK_LEASE_SECONDS", "90"))
 MAX_ACTIVE_TRACKS = int(os.getenv("MAX_ACTIVE_TRACKS", "20"))
 
 track_leases = {}  # norad_id -> lease_expiration_time
-ts = load.timescale()
+ts = load.timescale(builtin=True)  # tablas de tiempo incluidas: no descarga nada (demo sin Internet)
 sats = {}  # norad_id -> (EarthSatellite, name, epoch, groups: set[str])
 batch = None  # (norad_ids, names, groups, SatrecArray); se rehace cuando cambia sats
 
@@ -155,24 +164,59 @@ def propagate_all():
     producer.poll(0)
 
 
-def compute_track(norad_id):
+def orbital_period_s(sat):
+    # no_kozai es el movimiento medio del TLE en radianes por minuto: una vuelta son 2π
+    n = sat.model.no_kozai
+    if not np.isfinite(n) or n <= 0:
+        return None
+    return 2 * np.pi / n * 60.0
+
+
+def track_horizon_s(sat):
+    # Una órbita completa (o TRACK_ORBITS) en vez de una hora fija:
+    #   LEO (ISS ~92 min): una vuelta entera, no dos tercios.
+    #   MEO (GPS ~12 h):   la órbita completa, no un arco corto.
+    #   GEO (~24 h):       el día completo; casi no se mueve sobre el suelo, así que la
+    #                      traza se queda en un punto o un "ocho" pequeño, que es lo real.
+    # El tope evita trayectorias enormes con órbitas muy altas.
+    period = orbital_period_s(sat)
+    if period is None:
+        return TRACK_FALLBACK_HORIZON_S, None
+    return min(period * TRACK_ORBITS, TRACK_MAX_HORIZON_S), period
+
+
+def compute_track(norad_id, t0=None):
     sat, name, epoch, _ = sats[norad_id]
-    t0 = ts.now()
-    # Es necesario trabajar en días porque Skyfield no permite offsets en segundos
-    offsets_days = np.arange(0, TRACK_HORIZON_SECONDS + 1, TRACK_STEP_SECONDS) / 86400.0
-    t = ts.tt_jd(t0.tt + offsets_days)     # 61 instantes de una vez (vectorizado)
-    geo = wgs84.geographic_position_of(sat.at(t))
+    if t0 is None:          # (t0 se puede fijar en pruebas)
+        t0 = ts.now()
+    horizon_s, period_s = track_horizon_s(sat)
+    # Mismo número de puntos para cualquier órbita: el paso sale solo
+    # (~46 s en la ISS, ~6 min en GPS, ~12 min en GEO) y el mensaje tiene siempre el mismo tamaño.
+    offsets_s = np.linspace(0.0, horizon_s, TRACK_POINTS)
+    # Skyfield trabaja en días, no en segundos
+    t = ts.tt_jd(t0.tt + offsets_s / 86400.0)
+    positions = sat.at(t)                  # posiciones en el espacio (GCRS), una por instante
+    if TRACK_FRAME != "ground":
+        # Todas se pasan a lat/lon con la orientación de la Tierra en t0, no en su propio instante:
+        # así no se mezcla la rotación terrestre con la órbita y sale la elipse real, cerrada.
+        frozen = ts.tt_jd(np.full(len(offsets_s), t0.tt))
+        positions = Geocentric(positions.position.au, None, frozen)
+    geo = wgs84.geographic_position_of(positions)
     points = [
         [round(float(la), 4), round(float(lo), 4), round(float(al), 1)]
         for la, lo, al in zip(geo.latitude.degrees, geo.longitude.degrees, geo.elevation.km)
+        if np.isfinite(la) and np.isfinite(lo) and np.isfinite(al)   # SGP4 da NaN si la órbita decae
     ]
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "norad_id": norad_id,
         "name": name,
         "epoch": epoch,
         "generated_at": t0.utc_iso(),
-        "step_s": TRACK_STEP_SECONDS,
+        "period_min": round(period_s / 60, 1) if period_s else None,
+        "horizon_s": round(horizon_s),
+        "step_s": round(horizon_s / (TRACK_POINTS - 1), 1),
+        "frame": "ground" if TRACK_FRAME == "ground" else "inertial",
         "points": points,
     }
 

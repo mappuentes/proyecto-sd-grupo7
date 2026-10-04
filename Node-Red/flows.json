@@ -8,52 +8,13 @@
         "env": []
     },
     {
-        "id": "3bd81fe80d63f35e",
-        "type": "kafkajs-client",
-        "name": "satellites-radar",
-        "brokers": "kafka:19092",
-        "clientid": "satellites-radar",
-        "connectiontimeout": 3000,
-        "requesttimeout": 25000,
-        "advancedretry": false,
-        "maxretrytime": 30000,
-        "initialretrytime": 300,
-        "factor": 0.2,
-        "multiplier": 2,
-        "retries": 5,
-        "auth": "none",
-        "tlsselfsign": false,
-        "tlscacert": "",
-        "tlsclientcert": "",
-        "tlsprivatekey": "",
-        "tlspassphrase": "",
-        "saslssl": true,
-        "saslmechanism": "plain",
-        "loglevel": "error"
-    },
-    {
-        "id": "1a9b9a466e256b28",
-        "type": "global-config",
-        "env": [],
-        "modules": {
-            "node-red-contrib-web-worldmap": "5.8.1",
-            "node-red-contrib-kafkajs": "0.0.7"
-        }
-    },
-    {
-        "id": "globe-ws",
-        "type": "websocket-listener",
-        "path": "/ws/globe",
-        "wholemsg": "false"
-    },
-    {
         "id": "30427e218d16c051",
         "type": "worldmap",
         "z": "f9d5dd2c9282c97b",
         "name": "Mapa de satélites",
-        "lat": "",
-        "lon": "",
-        "zoom": "",
+        "lat": "20",
+        "lon": "0",
+        "zoom": "4",
         "layer": "OSMG",
         "cluster": "",
         "maxage": "",
@@ -74,8 +35,8 @@
         "mapurl": "",
         "mapopt": "",
         "mapwms": false,
-        "x": 1370,
-        "y": 340,
+        "x": 1310,
+        "y": 320,
         "wires": []
     },
     {
@@ -92,18 +53,18 @@
                 "vt": "str"
             }
         ],
-        "repeat": "21600",
+        "repeat": "43200",
         "crontab": "",
-        "once": true,
+        "once": false,
         "onceDelay": 2,
         "topic": "",
         "payload": "",
         "payloadType": "date",
-        "x": 100,
+        "x": 170,
         "y": 100,
         "wires": [
             [
-                "a107cddd45c27783"
+                "a5dd1063087b5e2d"
             ]
         ]
     },
@@ -111,11 +72,11 @@
         "id": "a107cddd45c27783",
         "type": "http request",
         "z": "f9d5dd2c9282c97b",
-        "name": "CelesTrak: grupo stations",
+        "name": "CelesTrak: grupos",
         "method": "GET",
         "ret": "obj",
         "paytoqs": "ignore",
-        "url": "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json",
+        "url": "",
         "tls": "",
         "persist": false,
         "proxy": "",
@@ -123,7 +84,7 @@
         "authType": "",
         "senderr": false,
         "headers": [],
-        "x": 310,
+        "x": 630,
         "y": 100,
         "wires": [
             [
@@ -143,7 +104,7 @@
         "complete": "payload",
         "statusVal": "",
         "statusType": "auto",
-        "x": 720,
+        "x": 1260,
         "y": 220,
         "wires": []
     },
@@ -152,14 +113,14 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "construir-tle-messages",
-        "func": "if (msg.statusCode !== undefined && msg.statusCode !== 200) {\n  node.error(`CelesTrak respondió con HTTP ${msg.statusCode}`, msg);\n  return null;\n}\n\nconst sats = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\n\nmsg.payload = sats.map(o => ({\n  key: String(o.NORAD_CAT_ID),\n  value: JSON.stringify({\n    schema_version: \"1.0\",\n    norad_id: String(o.NORAD_CAT_ID),\n    name: o.OBJECT_NAME,\n    epoch: o.EPOCH,\n    source: \"celestrak:gp\",\n    group: \"stations\",\n    ingested_at: new Date().toISOString(),\n    omm: o\n  })\n}));\n\nreturn msg;",
+        "func": "if (msg.statusCode !== undefined && msg.statusCode !== 200) {\n  node.error(`CelesTrak respondió con HTTP ${msg.statusCode} para el grupo ${msg.group}`, msg);\n  return null;\n}\n\nif (!Array.isArray(msg.payload)) {\n  node.warn(`CelesTrak no devolvió una lista para el grupo ${msg.group}: ${String(msg.payload).slice(0, 200)}`);\n  return null;\n}\n\nconst group = msg.group || \"stations\";\nconst now = new Date().toISOString();\n\nmsg.payload = msg.payload\n  .filter(o => o && o.NORAD_CAT_ID !== undefined)\n  .map(o => ({\n    key: String(o.NORAD_CAT_ID),\n    value: JSON.stringify({\n      schema_version: \"1.0\",\n      norad_id: String(o.NORAD_CAT_ID),\n      name: o.OBJECT_NAME,\n      epoch: o.EPOCH,\n      source: \"celestrak:gp\",\n      group,\n      ingested_at: now,\n      omm: o\n    })\n  }));\n\nnode.status({ text: `${group}: ${msg.payload.length} satélites` });\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 520,
+        "x": 940,
         "y": 100,
         "wires": [
             [
@@ -184,7 +145,7 @@
         "transactiontimeout": 60000,
         "metadatamaxage": 300000,
         "allowautotopiccreation": false,
-        "x": 1350,
+        "x": 1930,
         "y": 100,
         "wires": []
     },
@@ -214,34 +175,17 @@
         "y": 320,
         "wires": [
             [
-                "bbeb170e2f1aafd4",
                 "391e8bc986aa4d0b",
                 "globe-normalize"
             ]
         ]
     },
     {
-        "id": "bbeb170e2f1aafd4",
-        "type": "debug",
-        "z": "f9d5dd2c9282c97b",
-        "name": "debug 3",
-        "active": true,
-        "tosidebar": true,
-        "console": false,
-        "tostatus": false,
-        "complete": "false",
-        "statusVal": "",
-        "statusType": "auto",
-        "x": 540,
-        "y": 420,
-        "wires": []
-    },
-    {
         "id": "391e8bc986aa4d0b",
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "pintar-satelites",
-        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) {\n  raw = raw.value;\n}\n\nlet data;\ntry {\n  data = (typeof raw === \"string\") ? JSON.parse(raw) : raw;\n} catch (e) {\n  node.warn(\"value no es JSON: \" + raw);\n  return null;\n}\n\nif (![data.lat, data.lon].every(Number.isFinite)) {\n  return null;\n}\n\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nfunction colorPorGrupo(d) {\n  const n = (d.name || \"\").toUpperCase();\n  if (n.includes(\"STARLINK\")) return \"cyan\";\n  if (n.includes(\"GPS\"))      return \"yellow\";\n  if (n.includes(\"GALILEO\"))  return \"orange\";\n  if (n.includes(\"ISS\"))      return \"red\";\n  return \"lime\";\n}\n\nconst norad = String(data.norad_id);\nconst botones = /^[0-9]+$/.test(norad)\n  ? `<br><button onclick='feedback(\"${norad}\",\"${norad}\",\"track_on\",true)'>Predecir 1 h</button>`\n    + ` <button onclick='feedback(\"${norad}\",\"${norad}\",\"track_off\",true)'>Quitar</button>`\n  : \"\";\n\nmsg.payload = {\n  name: data.name || data.norad_id,\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: colorPorGrupo(data),\n  layer: \"Satelites\",\n  label: data.name,\n  ttl: 30,\n  popup: `${data.name}<br>alt: ${alt}<br>vel: ${vel}${botones}`\n};\n\nreturn msg;",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\n\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch (e) { return null; }\nif (!data || ![data.lat, data.lon].every(Number.isFinite)) return null;\n\nconst groups = Array.isArray(data.groups) && data.groups.length ? data.groups : [\"sin grupo\"];\nconst group = groups[0];\nconst norad = String(data.norad_id);\nconst name = data.name || norad;\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nconst botones = /^[0-9]+$/.test(norad)\n  ? `<br><button onclick='feedback(\"${norad}\",\"${norad}\",\"track_on\",true)'>Predecir próxima órbita</button>`\n    + ` <button onclick='feedback(\"${norad}\",\"${norad}\",\"track_off\",true)'>Quitar</button>`\n  : \"\";\n\nmsg.topic = norad;                       // lo usa el limitador por satélite\nmsg.payload = {\n  name: `${name} (${norad})`,            // identificador único del marcador\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: \"#4a6680\",\n  layer: group,                          // una capa por grupo: se activan desde el menú de capas\n  tooltip: name,                         // el nombre solo al pasar el ratón\n  ttl: 30,\n  popup: `<b>${escapeHtml(name)}</b><br>NORAD ${norad}`\n       + `<br>grupos: ${groups.map(escapeHtml).join(\", \")}`\n       + `<br>alt: ${alt}<br>vel: ${vel}${botones}`\n};\nreturn msg;\n\nfunction escapeHtml(s) {\n  return String(s).replace(/[&<>\"']/g, c =>\n    ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -268,7 +212,7 @@
         "stream": false,
         "addname": "",
         "property": "payload",
-        "x": 780,
+        "x": 1260,
         "y": 100,
         "wires": [
             [
@@ -288,7 +232,7 @@
         "initialize": "",
         "finalize": "",
         "libs": [],
-        "x": 1070,
+        "x": 1570,
         "y": 100,
         "wires": [
             [
@@ -301,7 +245,7 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "Validar posición para globo",
-        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch { node.warn(\"Globo: posición no válida\"); return null; }\nif (!data || !/^[0-9]+$/.test(String(data.norad_id)) ||\n    ![data.lat, data.lon, data.alt_km].every(Number.isFinite) ||\n    Math.abs(data.lat) > 90 || Math.abs(data.lon) > 180 || data.alt_km < 0 ||\n    typeof data.ts !== \"string\" || !Number.isFinite(Date.parse(data.ts))) {\n    node.warn(\"Globo: posición incompleta o fuera de rango\");\n    return null;\n}\nreturn { payload: JSON.stringify({\n    norad_id: String(data.norad_id),\n    name: typeof data.name === \"string\" ? data.name : String(data.norad_id),\n    lat: data.lat, lon: data.lon, alt_km: data.alt_km, ts: data.ts,\n    velocity_kms: Number.isFinite(data.velocity_kms) && data.velocity_kms >= 0 ? data.velocity_kms : null\n}) };",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch { node.warn(\"Globo: posición no válida\"); return null; }\nif (!data || !/^[0-9]+$/.test(String(data.norad_id)) ||\n    ![data.lat, data.lon, data.alt_km].every(Number.isFinite) ||\n    Math.abs(data.lat) > 90 || Math.abs(data.lon) > 180 || data.alt_km < 0 ||\n    typeof data.ts !== \"string\" || !Number.isFinite(Date.parse(data.ts))) {\n    node.warn(\"Globo: posición incompleta o fuera de rango\");\n    return null;\n}\nreturn {\n    payload: JSON.stringify({\n        norad_id: String(data.norad_id),\n        name: typeof data.name === \"string\" ? data.name : String(data.norad_id),\n        groups: Array.isArray(data.groups) ? data.groups.filter(g => typeof g === \"string\") : [],\n        lat: data.lat, lon: data.lon, alt_km: data.alt_km, ts: data.ts,\n        velocity_kms: Number.isFinite(data.velocity_kms) && data.velocity_kms >= 0 ? data.velocity_kms : null\n    })\n};",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -323,7 +267,7 @@
         "name": "Posiciones → globo 3D",
         "server": "globe-ws",
         "client": "",
-        "x": 1410,
+        "x": 1490,
         "y": 520,
         "wires": []
     },
@@ -461,7 +405,7 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "Repartir trayectoria",
-        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet track;\ntry { track = typeof raw === \"string\" ? JSON.parse(raw) : raw; } catch (e) { return null; }\nif (!track || !/^[0-9]+$/.test(String(track.norad_id)) ||\n    !Array.isArray(track.points) || track.points.length < 2) return null;\n\nconst norad = String(track.norad_id);\nconst subs = flow.get(\"trackSubs\") || {};\nconst now = Date.now();\nconst toGlobe = [];\nconst toMap = [];\n\nfor (const sub of Object.values(subs)) {\n    if (sub.norad !== norad || (sub.expires !== null && sub.expires < now)) continue;\n    if (sub.kind === \"globe\") {\n        toGlobe.push({ _session: sub.session, payload: JSON.stringify({ type: \"track\", ...track }) });\n    } else {\n        toMap.push({ _sessionid: sub.session, payload: {\n            name: \"track-\" + norad,\n            line: splitAtAntimeridian(track.points),\n            color: \"#ffc66d\", weight: 2, opacity: 0.9,\n            layer: \"Predicción\",\n            clickable: true,\n            popup: \"Próxima hora · \" + escapeHtml(track.name || norad) + \" (NORAD \" + norad + \")\"\n        }});\n    }\n}\nreturn [toGlobe, toMap];\n\n// Parte la línea al cruzar ±180°: si no, Leaflet une +179° con -179° cruzando todo el mapa.\nfunction splitAtAntimeridian(points) {\n    const segments = [[]];\n    for (let i = 0; i < points.length; i++) {\n        const [lat, lon] = points[i];\n        if (i > 0) {\n            const [plat, plon] = points[i - 1];\n            if (Math.abs(lon - plon) > 180) {\n                const edge = plon > 0 ? 180 : -180;\n                const lonUnwrapped = lon + (plon > 0 ? 360 : -360);\n                const f = (edge - plon) / (lonUnwrapped - plon);   // dónde cae el cruce (0..1)\n                const latCross = plat + f * (lat - plat);\n                segments[segments.length - 1].push([latCross, edge]);   // cierra en un borde\n                segments.push([[latCross, -edge]]);                     // reabre en el otro\n            }\n        }\n        segments[segments.length - 1].push([lat, lon]);\n    }\n    return segments;\n}\n\nfunction escapeHtml(s) {\n    return String(s).replace(/[&<>\"']/g, c => ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}\n",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\nlet track;\ntry { track = typeof raw === \"string\" ? JSON.parse(raw) : raw; } catch (e) { return null; }\nif (!track || !/^[0-9]+$/.test(String(track.norad_id)) ||\n    !Array.isArray(track.points) || track.points.length < 2) return null;\n\nconst norad = String(track.norad_id);\nconst subs = flow.get(\"trackSubs\") || {};\nconst now = Date.now();\nconst toGlobe = [];\nconst toMap = [];\nlet globePayload = null;   // se calcula una sola vez, aunque haya varias pestañas del globo\n\nfor (const sub of Object.values(subs)) {\n    if (sub.norad !== norad || (sub.expires !== null && sub.expires < now)) continue;\n    if (sub.kind === \"globe\") {\n        // El globo dibuja la órbita en el espacio; el mapa 2D, la traza sobre el terreno.\n        globePayload = globePayload ||\n            JSON.stringify({ type: \"track\", ...track, points: toInertial(track), frame: \"inertial\" });\n        toGlobe.push({ _session: sub.session, payload: globePayload });\n    } else {\n        toMap.push({ _sessionid: sub.session, payload: {\n            name: \"track-\" + norad,\n            line: splitAtAntimeridian(track.points),\n            color: \"#ff2d55\", weight: 3, opacity: 1,\n            layer: \"Predicción\",\n            clickable: true,\n            popup: \"Próxima órbita · \" + escapeHtml(track.name || norad) + \" (NORAD \" + norad + \")\"\n        }});\n    }\n}\nreturn [toGlobe, toMap];\n\n// Traza sobre el terreno -> órbita en el espacio, con la Tierra \"congelada\" en el primer punto.\n// Cada punto se gira alrededor del eje terrestre lo que la Tierra ha girado desde el inicio:\n// solo cambia la longitud. Comparado con el cálculo exacto en el propagador, el error es de\n// pocos km (2 km en la ISS, 13 km en un Galileo), invisible a la escala del globo.\nfunction toInertial(t) {\n    if (t.frame === \"inertial\") return t.points;            // ya viene convertida del propagador\n    const EARTH_DEG_PER_S = 360.98564736629 / 86400;        // giro de la Tierra (día sidéreo)\n    const step = Number(t.step_s) || 60;\n    return t.points.map(([lat, lon, alt], k) => {\n        const l = ((lon + EARTH_DEG_PER_S * step * k + 540) % 360) - 180;\n        return [lat, Math.round(l * 1e4) / 1e4, alt];\n    });\n}\n\n// Parte la línea al cruzar ±180°: si no, Leaflet une +179° con -179° cruzando todo el mapa.\nfunction splitAtAntimeridian(points) {\n    const segments = [[]];\n    for (let i = 0; i < points.length; i++) {\n        const [lat, lon] = points[i];\n        if (i > 0) {\n            const [plat, plon] = points[i - 1];\n            if (Math.abs(lon - plon) > 180) {\n                const edge = plon > 0 ? 180 : -180;\n                const lonUnwrapped = lon + (plon > 0 ? 360 : -360);\n                const f = (edge - plon) / (lonUnwrapped - plon);   // dónde cae el cruce (0..1)\n                const latCross = plat + f * (lat - plat);\n                segments[segments.length - 1].push([latCross, edge]);   // cierra en un borde\n                segments.push([[latCross, -edge]]);                     // reabre en el otro\n            }\n        }\n        segments[segments.length - 1].push([lat, lon]);\n    }\n    return segments;\n}\n\nfunction escapeHtml(s) {\n    return String(s).replace(/[&<>\"']/g, c => ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}\n",
         "outputs": 2,
         "timeout": 0,
         "noerr": 0,
@@ -546,8 +490,8 @@
         "frombeginning": false,
         "clearoffsets": false,
         "allowautotopiccreation": false,
-        "x": 930,
-        "y": 780,
+        "x": 1070,
+        "y": 800,
         "wires": [
             [
                 "7fc270a27172d809"
@@ -570,7 +514,7 @@
         "transactiontimeout": 60000,
         "metadatamaxage": 300000,
         "allowautotopiccreation": false,
-        "x": 950,
+        "x": 1090,
         "y": 860,
         "wires": []
     },
@@ -579,7 +523,7 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "Mapa de un solo mundo (sin repetir)",
-        "func": "// Mapa 2D con un solo mundo. Las capas base de Worldmap se repiten en horizontal sin fin, y\n// los marcadores y la traza de predicción solo se dibujan en una de las copias. Esta capa usa\n// noWrap: Leaflet dibuja el mundo una vez y fuera de ±180° queda fondo vacío, así que se puede\n// alejar el zoom libremente sin ver copias.\nconst p = msg.payload || {};\nif (p.action !== \"connected\" || !msg._sessionid) return null;\n\nconst LAYER = \"OSM (un solo mundo)\";\nconst sid = msg._sessionid;\n\n// 1) Pasar antes a una capa propia de Worldmap. Si la pestaña se reconecta y ya tenía la nuestra,\n//    así se quita del mapa la copia antigua en lugar de apilar otra encima.\nconst toBuiltIn = { _sessionid: sid, payload: { command: { layer: \"OSM\" } } };\n\n// 2) Crear la capa sin repetición y activarla. zoomLevels vacío quita límites de zoom anteriores.\nconst toSingleWorld = { _sessionid: sid, payload: { command: {\n    map: {\n        name: LAYER,\n        url: \"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png\",\n        opt: {\n            noWrap: true,                                  // no repetir el mundo\n            bounds: [[-85.0511, -180], [85.0511, 180]],    // no pedir teselas fuera de él\n            subdomains: [\"a\", \"b\", \"c\"],\n            maxNativeZoom: 19,\n            maxZoom: 20,\n            attribution: \"Map data © OpenStreetMap contributors\"\n        }\n    },\n    layer: LAYER,\n    zoomLevels: []\n} } };\n\nreturn [[toBuiltIn, toSingleWorld]];",
+        "func": "// Mapa 2D con un solo mundo. Las capas base de Worldmap se repiten en horizontal sin fin, y\n// los marcadores y la traza de predicción solo se dibujan en una de las copias. Esta capa usa\n// noWrap: Leaflet dibuja el mundo una vez y fuera de ±180° queda fondo vacío, así que se puede\n// alejar el zoom libremente sin ver copias.\nconst p = msg.payload || {};\nif (p.action !== \"connected\" || !msg._sessionid) return null;\n\nconst LAYER = \"OSM (un solo mundo)\";\nconst sid = msg._sessionid;\n\n// 1) Pasar antes a una capa propia de Worldmap. Si la pestaña se reconecta y ya tenía la nuestra,\n//    así se quita del mapa la copia antigua en lugar de apilar otra encima.\nconst toBuiltIn = { _sessionid: sid, payload: { command: { layer: \"OSM\" } } };\n\n// 2) Crear la capa sin repetición y activarla. zoomLevels vacío quita límites de zoom anteriores.\nconst toSingleWorld = { _sessionid: sid, payload: { command: {\n    map: {\n        name: LAYER,\n        url: \"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png\",\n        opt: {\n            noWrap: true,                                  // no repetir el mundo\n            bounds: [[-85.0511, -180], [85.0511, 180]],    // no pedir teselas fuera de él\n            subdomains: [\"a\", \"b\", \"c\"],\n            maxNativeZoom: 19,\n            maxZoom: 20,\n            attribution: \"Map data © OpenStreetMap contributors\"\n        }\n    },\n    layer: LAYER,\n    zoomLevels: []\n} } };\n\n\nconst fitWorld = {\n    _sessionid: sid, payload: {\n        command: {\n            bounds: [[-60, -180], [75, 180]]\n        }\n    }\n};\n\nreturn [[toBuiltIn, toSingleWorld]];",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -593,5 +537,105 @@
                 "30427e218d16c051"
             ]
         ]
+    },
+    {
+        "id": "a5dd1063087b5e2d",
+        "type": "function",
+        "z": "f9d5dd2c9282c97b",
+        "name": "lista grupos satelites",
+        "func": "const GROUPS = [\"stations\", \"visual\", \"science\", \"weather\", \"gnss\", \"iridium-NEXT\"];\n\nreturn [GROUPS.map(group => ({\n    group,\n    url: `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(group)}&FORMAT=json`\n}))];",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 280,
+        "y": 200,
+        "wires": [
+            [
+                "bcf1e9a692afca1f"
+            ]
+        ]
+    },
+    {
+        "id": "bcf1e9a692afca1f",
+        "type": "delay",
+        "z": "f9d5dd2c9282c97b",
+        "name": "",
+        "pauseType": "rate",
+        "timeout": "2",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "2",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 540,
+        "y": 200,
+        "wires": [
+            [
+                "a107cddd45c27783"
+            ]
+        ]
+    },
+    {
+        "id": "bbeb170e2f1aafd4",
+        "type": "debug",
+        "z": "f9d5dd2c9282c97b",
+        "name": "debug 3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 620,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "3bd81fe80d63f35e",
+        "type": "kafkajs-client",
+        "name": "satellites-radar",
+        "brokers": "kafka:19092",
+        "clientid": "satellites-radar",
+        "connectiontimeout": 3000,
+        "requesttimeout": 25000,
+        "advancedretry": false,
+        "maxretrytime": 30000,
+        "initialretrytime": 300,
+        "factor": 0.2,
+        "multiplier": 2,
+        "retries": 5,
+        "auth": "none",
+        "tlsselfsign": false,
+        "tlscacert": "",
+        "tlsclientcert": "",
+        "tlsprivatekey": "",
+        "tlspassphrase": "",
+        "saslssl": true,
+        "saslmechanism": "plain",
+        "loglevel": "error"
+    },
+    {
+        "id": "globe-ws",
+        "type": "websocket-listener",
+        "path": "/ws/globe",
+        "wholemsg": "false"
+    },
+    {
+        "id": "d6d97ef43526a4b5",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-web-worldmap": "5.8.1",
+            "node-red-contrib-kafkajs": "0.0.7"
+        }
     }
 ]

@@ -93,7 +93,7 @@
         <dt>Latitud / longitud</dt><dd id="sat-coords"></dd>
         <dt>Actualización</dt><dd id="sat-time"></dd>
       </dl>
-      <label><input id="predict" type="checkbox"> Predecir próxima hora</label>
+      <label><input id="predict" type="checkbox"> Predecir próxima órbita</label>
       <p id="predict-status" class="legend"></p>
       <button id="center" type="button">Centrar de nuevo</button>
     </section>
@@ -471,13 +471,45 @@
       renewTimer = null;
       predicting = null;
       predictStatus.textContent = '';
+      cancelTrackAnimation();
+      drawnTrackFor = null;
       if (globe) globe.pathsData([]);
     }
 
+    // La línea "crece" desde el satélite la primera vez que se muestra una trayectoria.
+    // Cada paso usa un objeto nuevo: globe.gl no redibuja bien una línea gruesa existente
+    // si cambia su número de puntos, así que se recrea (son 120 puntos, es barato).
+    const TRACK_DRAW_MS = 1400;
+    let trackAnim = null;                // requestAnimationFrame del trazado en curso
+    let drawnTrackFor = null;            // NORAD cuya trayectoria ya se ha animado
+
+    function cancelTrackAnimation() {
+      if (trackAnim) cancelAnimationFrame(trackAnim);
+      trackAnim = null;
+    }
+
     function handleTrack(data) {
-      if (data.norad_id !== predicting || !Array.isArray(data.points)) return;
-      globe.pathsData([{ points: data.points }]);
+      if (data.norad_id !== predicting || !Array.isArray(data.points) || data.points.length < 2) return;
       predictStatus.textContent = `Calculada a las ${new Date(data.generated_at).toLocaleTimeString('es-ES')}`;
+      cancelTrackAnimation();
+      const points = data.points;
+
+      // Recálculo periódico (cada minuto) del mismo satélite: se sustituye sin animar.
+      if (drawnTrackFor === data.norad_id) {
+        globe.pathsData([{ points }]);
+        return;
+      }
+
+      // Trayectoria nueva: se dibuja progresivamente, rápido al principio y frenando al final.
+      drawnTrackFor = data.norad_id;
+      const start = performance.now();
+      const step = now => {
+        const progress = Math.min(1, (now - start) / TRACK_DRAW_MS);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        globe.pathsData([{ points: points.slice(0, Math.max(2, Math.ceil(eased * points.length))) }]);
+        trackAnim = progress < 1 ? requestAnimationFrame(step) : null;
+      };
+      trackAnim = requestAnimationFrame(step);
     }
 
     predictBox.addEventListener('change', () => {
