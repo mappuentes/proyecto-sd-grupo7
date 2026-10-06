@@ -8,6 +8,45 @@
         "env": []
     },
     {
+        "id": "3bd81fe80d63f35e",
+        "type": "kafkajs-client",
+        "name": "satellites-radar",
+        "brokers": "kafka1:19092,kafka2:19092,kafka3:19092",
+        "clientid": "satellites-radar",
+        "connectiontimeout": 3000,
+        "requesttimeout": 25000,
+        "advancedretry": false,
+        "maxretrytime": 30000,
+        "initialretrytime": 300,
+        "factor": 0.2,
+        "multiplier": 2,
+        "retries": 5,
+        "auth": "none",
+        "tlsselfsign": false,
+        "tlscacert": "",
+        "tlsclientcert": "",
+        "tlsprivatekey": "",
+        "tlspassphrase": "",
+        "saslssl": true,
+        "saslmechanism": "plain",
+        "loglevel": "error"
+    },
+    {
+        "id": "globe-ws",
+        "type": "websocket-listener",
+        "path": "/ws/globe",
+        "wholemsg": "false"
+    },
+    {
+        "id": "6fefbdf56c59bee8",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-web-worldmap": "5.8.1",
+            "node-red-contrib-kafkajs": "0.0.7"
+        }
+    },
+    {
         "id": "30427e218d16c051",
         "type": "worldmap",
         "z": "f9d5dd2c9282c97b",
@@ -185,7 +224,7 @@
         "type": "function",
         "z": "f9d5dd2c9282c97b",
         "name": "pintar-satelites",
-        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\n\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch (e) { return null; }\nif (!data || ![data.lat, data.lon].every(Number.isFinite)) return null;\n\nconst groups = Array.isArray(data.groups) && data.groups.length ? data.groups : [\"sin grupo\"];\nconst group = groups[0];\nconst norad = String(data.norad_id);\nconst name = data.name || norad;\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nconst botones = /^[0-9]+$/.test(norad)\n  ? `<br><button onclick='feedback(\"${norad}\",\"${norad}\",\"track_on\",true)'>Predecir próxima órbita</button>`\n    + ` <button onclick='feedback(\"${norad}\",\"${norad}\",\"track_off\",true)'>Quitar</button>`\n  : \"\";\n\nmsg.topic = norad;                       // lo usa el limitador por satélite\nmsg.payload = {\n  name: `${name} (${norad})`,            // identificador único del marcador\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: \"#4a6680\",\n  layer: group,                          // una capa por grupo: se activan desde el menú de capas\n  tooltip: name,                         // el nombre solo al pasar el ratón\n  ttl: 30,\n  popup: `<b>${escapeHtml(name)}</b><br>NORAD ${norad}`\n       + `<br>grupos: ${groups.map(escapeHtml).join(\", \")}`\n       + `<br>alt: ${alt}<br>vel: ${vel}${botones}`\n};\nreturn msg;\n\nfunction escapeHtml(s) {\n  return String(s).replace(/[&<>\"']/g, c =>\n    ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}",
+        "func": "let raw = msg.payload;\nif (raw && typeof raw === \"object\" && raw.value !== undefined) raw = raw.value;\nif (Buffer.isBuffer(raw)) raw = raw.toString(\"utf8\");\n\nlet data;\ntry { data = typeof raw === \"string\" ? JSON.parse(raw) : raw; }\ncatch (e) { return null; }\nif (!data || ![data.lat, data.lon].every(Number.isFinite)) return null;\n\n// Discard data from earlier\nconst max_age_ms = 30000;\nconst age = Date.now() - Date.parse(data.ts);\nif(!Number.isFinite(age) || age > max_age_ms) return null;\n\nconst groups = Array.isArray(data.groups) && data.groups.length ? data.groups : [\"sin grupo\"];\nconst group = groups[0];\nconst norad = String(data.norad_id);\nconst name = data.name || norad;\nconst alt = Number.isFinite(data.alt_km) ? Math.round(data.alt_km) + \" km\" : \"n/d\";\nconst vel = Number.isFinite(data.velocity_kms) ? data.velocity_kms.toFixed(2) + \" km/s\" : \"n/d\";\n\nconst botones = /^[0-9]+$/.test(norad)\n  ? `<br><button onclick='feedback(\"${norad}\",\"${norad}\",\"track_on\",true)'>Predecir próxima órbita</button>`\n    + ` <button onclick='feedback(\"${norad}\",\"${norad}\",\"track_off\",true)'>Quitar</button>`\n  : \"\";\n\nmsg.topic = norad;                       // lo usa el limitador por satélite\nmsg.payload = {\n  name: `${name} (${norad})`,            // identificador único del marcador\n  lat: data.lat,\n  lon: data.lon,\n  icon: \"satellite\",\n  iconColor: \"#4a6680\",\n  layer: group,                          // una capa por grupo: se activan desde el menú de capas\n  tooltip: name,                         // el nombre solo al pasar el ratón\n  ttl: 30,\n  popup: `<b>${escapeHtml(name)}</b><br>NORAD ${norad}`\n       + `<br>grupos: ${groups.map(escapeHtml).join(\", \")}`\n       + `<br>alt: ${alt}<br>vel: ${vel}${botones}`\n};\nreturn msg;\n\nfunction escapeHtml(s) {\n  return String(s).replace(/[&<>\"']/g, c =>\n    ({ \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c]));\n}",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -582,44 +621,5 @@
                 "a107cddd45c27783"
             ]
         ]
-    },
-    {
-        "id": "3bd81fe80d63f35e",
-        "type": "kafkajs-client",
-        "name": "satellites-radar",
-        "brokers": "kafka1:19092,kafka2:19092,kafka3:19092",
-        "clientid": "satellites-radar",
-        "connectiontimeout": 3000,
-        "requesttimeout": 25000,
-        "advancedretry": false,
-        "maxretrytime": 30000,
-        "initialretrytime": 300,
-        "factor": 0.2,
-        "multiplier": 2,
-        "retries": 5,
-        "auth": "none",
-        "tlsselfsign": false,
-        "tlscacert": "",
-        "tlsclientcert": "",
-        "tlsprivatekey": "",
-        "tlspassphrase": "",
-        "saslssl": true,
-        "saslmechanism": "plain",
-        "loglevel": "error"
-    },
-    {
-        "id": "globe-ws",
-        "type": "websocket-listener",
-        "path": "/ws/globe",
-        "wholemsg": "false"
-    },
-    {
-        "id": "6fefbdf56c59bee8",
-        "type": "global-config",
-        "env": [],
-        "modules": {
-            "node-red-contrib-web-worldmap": "5.8.1",
-            "node-red-contrib-kafkajs": "0.0.7"
-        }
     }
 ]
